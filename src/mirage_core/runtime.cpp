@@ -15,14 +15,19 @@ MirageCoreRuntime::MirageCoreRuntime():
         sol::lib::table
     );
     reflection.Component<TransformComponent>("Transform")
-        .Field("position", &TransformComponent::position)
-        .Field("scale", &TransformComponent::scale)
-        .Field("rotation", &TransformComponent::rotation);
+        .Field("Position", &TransformComponent::position)
+        .Field("Scale", &TransformComponent::scale)
+        .Field("Rotation", &TransformComponent::rotation);
 
     reflection.Component<GameComponent>("Game")
-        .Field("name", &GameComponent::name)
+        .Field("Name", &GameComponent::name)
         .DefaultArgs(std::string("GameComponent"));
     reflection.Component<ScriptComponent>("Script");
+    reflection.Component<SpriteComponent>("Sprite")
+        .Field("Path", &SpriteComponent::path)
+        .Field("Tint", &SpriteComponent::tint)
+        .Field("Hidden",&SpriteComponent::visible);
+    ;
     entityBus.SetNameProvider(
         [](const entt::registry& r, entt::entity e) -> std::string
         {

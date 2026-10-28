@@ -253,6 +253,9 @@ int main()
             entity1,
             "scripts/test.lua"
         );
+        core.registry.emplace<SpriteComponent>(
+            entity1
+        );
 
         core.registry.emplace<GameComponent>(
             core.entityBus.Create(),

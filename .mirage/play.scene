@@ -3,33 +3,43 @@
     {
       "components": {
         "Game": {
-          "name": "object_1"
+          "Name": "object_1"
+        },
+        "Sprite": {
+          "Hidden": false,
+          "Path": "",
+          "Tint": [
+            209,
+            50,
+            50,
+            255
+          ]
         },
         "Transform": {
-          "position": [
-            20.0,
-            50.0,
+          "Position": [
+            0.0,
+            0.0,
             0.0
           ],
-          "rotation": [
+          "Rotation": [
             0.0,
             0.0,
             0.0,
             1.0
           ],
-          "scale": [
+          "Scale": [
             1.0,
-            10.0,
+            1.0,
             1.0
           ]
         }
       },
-      "id": "c01c2e19-4019-4286-a7ea-8dab09b95442",
+      "id": "8f520ff3-47b0-4f83-a144-38f0a20c2dde",
       "script": {
         "fields": {
           "speed": {
             "type": "Int",
-            "value": 50
+            "value": 5
           },
           "target": {
             "type": "EntityRef",
@@ -42,10 +52,10 @@
     {
       "components": {
         "Game": {
-          "name": "object_2"
+          "Name": "object_2"
         }
       },
-      "id": "7a0c7b03-51fe-46a3-8289-f86730ae3131"
+      "id": "53f8721c-3409-402a-8928-4231ecaaa7b9"
     }
   ],
   "version": 1

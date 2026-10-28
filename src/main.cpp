@@ -14,6 +14,7 @@
 #include "entity_lua.h"
 #include "play_snapshot.h"
 #include "script_log.h"
+#include "lua_input.h"
 // One row per entity that has a GameComponent.
 struct Row
 {
@@ -92,6 +93,7 @@ int main()
     BindEntityLua(lua, entityBus, reflection);
     ScriptLog scriptLog;
     BindLuaPrint(lua, scriptLog);
+    BindLuaInput(lua,scriptLog);
     ScriptSystem scriptSystem(lua, reflection, registry, entityBus);
 
     // A script that exposes a field after the Inspector list was built.

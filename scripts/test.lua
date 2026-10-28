@@ -10,6 +10,7 @@ return function(entity)
     end
     function Update(dt)
         transform.position.x=transform.position.x+entity.speed*dt;
+        print(input.IsKeyDown("KEY_A"));
     end
     return {
         Start = Start,

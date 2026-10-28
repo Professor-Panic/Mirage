@@ -59,9 +59,8 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     raylib
     lua
-    gdi32 opengl32 shell32 winmm
+    gdi32 opengl32 shell32 winmm ws2_32
 )
-# Phase 4: add  ws2_32  here for the socket.
 
 # No -mwindows on purpose: keep the console visible while you debug the player.
 if(WIN32)

@@ -188,6 +188,7 @@ target_link_libraries(
         opengl32
         shell32
         winmm
+        ws2_32
 )
 # ============================================================
 # Windows / MinGW

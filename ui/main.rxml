@@ -31,37 +31,58 @@
         <Label class="mode-status" sync="true">{mode == 1 ? 'Playing' : 'Editing'}</Label>
     </Container>
 
+    <!-- Main menu: sits above the Play / Stop toolbar. -->
+    <Container class="menu-bar" direction="row">
+        <Container class="file-menu" direction="column">
+            <Button class="file-menu-button" onClick="{toggleFileMenu}">File</Button>
+            <Container class="file-dropdown" direction="column" if="{file_menu_open == 1}">
+                <Button class="file-menu-item" onClick="{openSceneDialog}">Open...</Button>
+                <Button class="file-menu-item" onClick="{saveScene}">Save</Button>
+                <Button class="file-menu-item" onClick="{saveSceneAs}">Save As...</Button>
+            </Container>
+        </Container>
+    </Container>
+
     <Container class="inspector" direction="column">
         <for each="{Entity_Fields}" as="f">
             <Label if="{f.first}" class="inspector-component">{f.component}</Label>
-
-            <!-- Normal fields: reflected component fields AND exposed script fields. -->
             <Row if="{!f.isRef}" class="inspector-row">
                 <Label class="inspector-label">{f.label}:</Label>
-                <Input
-                    class="class-inspector-field"
-                    value="{f.value}"
-                    sync="true"
-                    onSubmit="{refreshUI()}"
-                />
+                <Input class="class-inspector-field" value="{f.value}" sync="true" onSubmit="{refreshUI()}" />
             </Row>
-
-            <!-- Entity reference fields: drop a hierarchy entry here. -->
-            <Row if="{f.isRef}"
-                 class="inspector-row inspector-ref"
-                 dropTypes="entity"
-                 onDrop="f.value = $event.value.text">
+            <Row if="{f.isRef}" class="inspector-row inspector-ref" dropTypes="entity" onDrop="f.value = $event.value.text">
                 <Label class="inspector-label">{f.label}:</Label>
                 <Label class="inspector-ref-name" sync="true">{f.display}</Label>
                 <Button class="inspector-ref-clear" onClick="{f.value = ''}">x</Button>
             </Row>
         </for>
     </Container>
-    <Container class="console">
-    <Button class="console-clear" onClick="{clearLog()}">Clear Console</Button>
 
-    <Container class="console-scroll" showScrollbars="true" followTail="true">
-        <Label class="console-text" sync>{console_text}</Label>
+    <Container class="console">
+        <Button class="console-clear" onClick="{clearLog()}">Clear Console</Button>
+        <Container class="console-scroll" showScrollbars="true" followTail="true">
+            <Label class="console-text" sync="true">{console_text}</Label>
+        </Container>
     </Container>
-</Container>
+
+    <!-- Modal file picker, backed by mirage_editor/file_dialog.h. -->
+    <Container class="file-dialog-overlay" if="{fd_open == 1}" direction="column">
+        <Label class="file-dialog-title" sync="true">{fd_title}</Label>
+        <Container class="file-dialog-location" direction="row">
+            <Button class="file-dialog-small-button" onClick="{fd_action = 3}">Up</Button>
+            <Label class="file-dialog-dir" sync="true">{fd_dir}</Label>
+        </Container>
+        <Container class="file-dialog-list" direction="column" showScrollbars="true">
+            <for each="{FileEntries}" as="entry">
+                <Button class="file-dialog-entry" onClick="{fd_clicked = entry.index}">{entry.label}</Button>
+            </for>
+        </Container>
+        <Label class="file-dialog-label" if="{fd_save == 1}">File name</Label>
+        <Input class="file-dialog-name" if="{fd_save == 1}" value="{fd_name}" sync="true" />
+        <Label class="file-dialog-status" sync="true">{fd_status}</Label>
+        <Container class="file-dialog-actions" direction="row">
+            <Button class="file-dialog-action" onClick="{fd_action = 1}">{fd_save == 1 ? 'Save' : 'Open'}</Button>
+            <Button class="file-dialog-action" onClick="{fd_action = 2}">Cancel</Button>
+        </Container>
+    </Container>
 </UI>

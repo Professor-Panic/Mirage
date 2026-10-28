@@ -1,13 +1,18 @@
 // script_log.h
 #pragma once
 #include <deque>
+#include <functional>
 #include <string>
 #include <sol/sol.hpp>
 
 class ScriptLog {
 public:
+    // Optional hook: called for every line added (the player forwards it to the editor).
+    std::function<void(const std::string&)> onAdd;
+
     static constexpr size_t kMax = 2000;      // cap so it can't grow forever
     void Add(std::string line) {
+        if (onAdd) onAdd(line);
         lines_.push_back(std::move(line));
         if (lines_.size() > kMax) lines_.pop_front();
         dirty_ = true;

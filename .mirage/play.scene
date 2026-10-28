@@ -1,0 +1,52 @@
+{
+  "entities": [
+    {
+      "components": {
+        "Game": {
+          "name": "object_1"
+        },
+        "Transform": {
+          "position": [
+            20.0,
+            50.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            10.0,
+            1.0
+          ]
+        }
+      },
+      "id": "c01c2e19-4019-4286-a7ea-8dab09b95442",
+      "script": {
+        "fields": {
+          "speed": {
+            "type": "Int",
+            "value": 50
+          },
+          "target": {
+            "type": "EntityRef",
+            "value": ""
+          }
+        },
+        "path": "scripts/test.lua"
+      }
+    },
+    {
+      "components": {
+        "Game": {
+          "name": "object_2"
+        }
+      },
+      "id": "7a0c7b03-51fe-46a3-8289-f86730ae3131"
+    }
+  ],
+  "version": 1
+}

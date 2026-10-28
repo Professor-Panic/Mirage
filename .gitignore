@@ -1,10 +1,10 @@
 .cache
 .vscode
-
+build/
 build-editor/
 build-player/
 *.exe
 *.o
 *.obj
-
+scenes/
 .cache/

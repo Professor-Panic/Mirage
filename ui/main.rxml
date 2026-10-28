@@ -1,0 +1,67 @@
+<UI class="app">
+    <Container class="hierachy" direction="row">
+        <for each="{GameComponents}" as="gc" state="editing=false">
+            <!-- Drag source: carries the entity's stable uuid, not the runtime handle. -->
+            <StringInput
+                mode="trigger"
+                if="{!editing}"
+                class="class-inspector-names"
+                label="{gc.name}"
+                value="{gc.name}"
+                dragType="entity"
+                dragValue="{gc.uuid}"
+                onClick="{selected = gc.id}"
+                onKey="F2: editing = true"
+            />
+
+            <StringInput sync="true"
+                if="{editing}"
+                class="class-inspector-names"
+                value="{gc.name}"
+                onSubmit="{editing = false}"
+            />
+        </for>
+        <Button>Test</Button>
+    </Container>
+
+    <!-- Play / Edit toggle. `mode` is the C++ enum: 0 = Edit, 1 = Play. -->
+    <Container class="toolbar" direction="row">
+        <Button class="mode-button" sync="true" disabled="{mode == 1}" onClick="{mode = 1}">Play</Button>
+        <Button class="mode-button" sync="true" disabled="{mode == 0}" onClick="{mode = 0}">Stop</Button>
+        <Label class="mode-status" sync="true">{mode == 1 ? 'Playing' : 'Editing'}</Label>
+    </Container>
+
+    <Container class="inspector" direction="column">
+        <for each="{Entity_Fields}" as="f">
+            <Label if="{f.first}" class="inspector-component">{f.component}</Label>
+
+            <!-- Normal fields: reflected component fields AND exposed script fields. -->
+            <Row if="{!f.isRef}" class="inspector-row">
+                <Label class="inspector-label">{f.label}:</Label>
+                <Input
+                    class="class-inspector-field"
+                    value="{f.value}"
+                    sync="true"
+                    onSubmit="{refreshUI()}"
+                />
+            </Row>
+
+            <!-- Entity reference fields: drop a hierarchy entry here. -->
+            <Row if="{f.isRef}"
+                 class="inspector-row inspector-ref"
+                 dropTypes="entity"
+                 onDrop="f.value = $event.value.text">
+                <Label class="inspector-label">{f.label}:</Label>
+                <Label class="inspector-ref-name" sync="true">{f.display}</Label>
+                <Button class="inspector-ref-clear" onClick="{f.value = ''}">x</Button>
+            </Row>
+        </for>
+    </Container>
+    <Container class="console">
+    <Button class="console-clear" onClick="{clearLog()}">Clear Console</Button>
+
+    <Container class="console-scroll" showScrollbars="true" followTail="true">
+        <Label class="console-text" sync>{console_text}</Label>
+    </Container>
+</Container>
+</UI>

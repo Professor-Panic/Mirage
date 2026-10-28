@@ -1,0 +1,174 @@
+/* ------------------------------------------------------------------ */
+/* Hierarchy                                                          */
+/* ------------------------------------------------------------------ */
+
+.objects {
+    color: white;
+}
+
+.hierachy {
+    background-color: white;
+    position: absolute;
+    top: 5%;
+    width: 15%;
+    border-radius: 10px;
+    border-width: 4px;
+    font-family: var(--font-main);
+    padding: 8px;
+    min-height: 500px;
+}
+
+.class-inspector-names {
+    border-color: transparent;
+    border-width: 0px;
+    show-value-box: false;
+    color: black;
+}
+
+.class-inspector-names:hover {
+    background-color: rgb(192, 181, 181);
+    color: black;
+}
+
+/* The hierarchy entry currently being dragged */
+.class-inspector-names:dragging {
+    opacity: 0.5;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Inspector                                                          */
+/* ------------------------------------------------------------------ */
+:root{
+    --font-main:"Inter-Regular"
+}
+.inspector {
+    background-color: white;
+    position: absolute;
+    top: 5%;
+    left: 80%;                 
+    width: 20%;
+    font-family: var(--font-main);
+    font-size: 14;
+    color: black;
+    padding: 8px;
+    border-radius: 10px;
+    gap: 10px;
+    min-height: 500px;
+}
+.inspector-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;   /* instead of align-self on every field */
+    gap: 8px;
+}
+
+.inspector-label {
+    display: block;        /* inline labels ignore width */
+    width: 50px;          /* pick one width wide enough for your longest name */
+    flex-shrink: 0;        /* don't let the row squeeze it */
+    color: black;
+}
+
+.class-inspector-field {
+    flex-grow: 1;          /* every input fills the rest of the row */
+    min-width: 0;
+    height: 25px;
+}
+/* Component heading ("Transform", "Game", "Script") */
+.inspector-component {
+    margin-top: 8px;
+    font-size: 18px;
+    color: black;
+}
+/* ------------------------------------------------------------------ */
+/* Entity reference fields (drop a hierarchy entry onto the row)      */
+/* ------------------------------------------------------------------ */
+
+/* Slightly different tint so ref rows read as "drop here" */
+.inspector-ref {
+    background-color: rgb(225, 240, 225);
+}
+
+/* A hierarchy entry is being held over this row and it accepts it */
+.inspector-ref:drag-over {
+    background-color: rgb(120, 170, 235);
+}
+
+/* Target name ("None" / "Missing" / entity name) fills the space */
+.inspector-ref-name {
+    flex-grow: 1;
+    color: black;
+}
+
+.inspector-ref-clear {
+    width: 24px;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Play / Edit toolbar                                                */
+/* ------------------------------------------------------------------ */
+
+.toolbar {
+    background-color: white;
+    position: absolute;
+    top: 0%;
+    left: 40%;
+    font-family: var(--font-main);
+    font-size: 14;
+    padding: 6px;
+    gap: 8px;
+    border-radius: 10px;
+    flex-direction: row;
+    justify-content: center;
+}
+
+.mode-button {
+    width: 70px;
+}
+
+.mode-status {
+    color: black;
+}
+.console {
+    position: absolute;
+    top: 70%;
+    left: 0%;
+    width: 100%;
+    height: 30%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px;
+    background-color: white;
+    color: black;
+    overflow: hidden;           /* nothing may draw outside the panel */
+}
+
+.console-clear {
+    font-family: var(--font-main);
+    
+}
+
+.console-scroll {
+    height: 75%;                /* any non-auto height: now clamped to the parent */
+    width: 100%;
+    overflow: auto;
+    background-color: rgb(245, 245, 245);
+    scrollbar-size: 10px;
+    scroll-speed: 30;
+}
+.console-text {
+    align-self: flex-start;
+    color: black;
+    font-family: var(--font-main);
+    height: auto; 
+}
+.console-scroll::scrollbar {
+    background-color: rgb(210, 210, 210);     /* track */
+}
+
+.console-scroll::scrollbar-thumb {
+    background-color: rgb(120, 120, 130);     /* the draggable part */
+}

@@ -19,8 +19,6 @@ set(EXTERNAL_DIR
     ${CMAKE_SOURCE_DIR}/external
 )
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 # ============================================================
 # Dependencies
 # ============================================================
@@ -50,120 +48,9 @@ find_package(
 # "raylib", so the target must exist before find_package(Rui).
 # ------------------------------------------------------------
 
-set(
-    RAYLIB_DIR
-    "C:/raylib/raylib"
-)
+# raylib + Lua imported targets (shared with the player build)
+include(${CMAKE_SOURCE_DIR}/cmake/MirageDeps.cmake)
 
-set(
-    RAYLIB_INCLUDE_DIR
-    "${RAYLIB_DIR}/src"
-)
-
-set(
-    LUA_DIR
-    "C:/lua-5.4.8"
-)
-set(
-    LUA_INCLUDE_DIR
-    "${LUA_DIR}/src"
-)
-set(
-    RAYLIB_LIBRARY
-    "${RAYLIB_DIR}/src/libraylib.a"
-)
-
-if(NOT EXISTS "${RAYLIB_INCLUDE_DIR}/raylib.h")
-    message(FATAL_ERROR
-        "raylib headers were not found at:\n"
-        "  ${RAYLIB_INCLUDE_DIR}"
-    )
-endif()
-
-if(NOT EXISTS "${RAYLIB_LIBRARY}")
-    message(FATAL_ERROR
-        "Prebuilt MinGW raylib library was not found at:\n"
-        "  ${RAYLIB_LIBRARY}"
-    )
-endif()
-
-# ------------------------------------------------------------
-# Imported raylib target
-# ------------------------------------------------------------
-
-if(NOT TARGET raylib)
-
-    add_library(
-        raylib
-        STATIC
-        IMPORTED
-        GLOBAL
-    )
-
-    set_target_properties(
-        raylib
-        PROPERTIES
-
-            IMPORTED_LOCATION
-                "${RAYLIB_LIBRARY}"
-
-            INTERFACE_INCLUDE_DIRECTORIES
-                "${RAYLIB_INCLUDE_DIR}"
-    )
-
-endif()
-
-if(NOT TARGET raylib)
-    message(FATAL_ERROR
-        "Failed to create the prebuilt raylib target."
-    )
-endif()
-set(
-    LUA_LIBRARY
-    "${LUA_DIR}/src/liblua.a"
-)
-
-if(NOT EXISTS "${LUA_INCLUDE_DIR}/lua.h")
-    message(FATAL_ERROR
-        "Lua headers were not found at:\n"
-        "  ${LUA_INCLUDE_DIR}"
-    )
-endif()
-
-if(NOT EXISTS "${LUA_LIBRARY}")
-    message(FATAL_ERROR
-        "Prebuilt MinGW Lua library was not found at:\n"
-        "  ${LUA_LIBRARY}"
-    )
-endif()
-
-if(NOT TARGET lua)
-
-    add_library(
-        lua
-        STATIC
-        IMPORTED
-        GLOBAL
-    )
-
-    set_target_properties(
-        lua
-        PROPERTIES
-
-            IMPORTED_LOCATION
-                "${LUA_LIBRARY}"
-
-            INTERFACE_INCLUDE_DIRECTORIES
-                "${LUA_INCLUDE_DIR}"
-    )
-
-endif()
-
-if(NOT TARGET lua)
-    message(FATAL_ERROR
-        "Failed to create the prebuilt Lua target."
-    )
-endif()
 # ------------------------------------------------------------
 # RUI
 # ------------------------------------------------------------
@@ -193,6 +80,11 @@ file(
     CONFIGURE_DEPENDS
     ${CMAKE_SOURCE_DIR}/src/*.c
 )
+
+# src/mirage_player/ is player-only: the editor never compiles it.
+# Everything else (mirage_core, mirage_editor, loose files) is built.
+list(FILTER SRC_CPP EXCLUDE REGEX ".*/src/mirage_player/.*")
+list(FILTER SRC_C   EXCLUDE REGEX ".*/src/mirage_player/.*")
 
 add_executable(
     ${PROJECT_NAME}

@@ -1,7 +1,8 @@
 .cache
 .vscode
-build
-build/
+
+build-editor/
+build-player/
 *.exe
 *.o
 *.obj

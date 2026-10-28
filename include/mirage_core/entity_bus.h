@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "entt.hpp"
+#include "entt/entt.hpp"
 #include "entity_id.h"
 
 // ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ public:
         entt::entity entity;
         std::string name;
     };
-
+    explicit EntityBus()=default;
     explicit EntityBus(entt::registry& registry) : reg_(registry) {
         reg_.on_construct<IdComponent>().connect<&EntityBus::OnIdAdded>(*this);
         reg_.on_destroy<IdComponent>().connect<&EntityBus::OnIdRemoved>(*this);

@@ -10,12 +10,12 @@
 #include <vector>
 
 #include <sol/sol.hpp>
-#include <entt.hpp>
+#include <entt/entt.hpp>
 #include <raylib.h>
 
-#include "reflection.h"
-#include "lua_proxy.h"
-#include "entity_bus.h"
+#include "mirage_core/reflection.h"
+#include "mirage_core/lua_proxy.h"
+#include "mirage_core/entity_bus.h"
 
 struct ScriptComponent
 {

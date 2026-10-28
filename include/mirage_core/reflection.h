@@ -1,7 +1,7 @@
 #pragma once
 #include "raylib.h"
-#include "entt.hpp"
-#include "entity_id.h"
+#include "entt/entt.hpp"
+#include "mirage_core/entity_id.h"
 #include <functional>
 #include <type_traits>
 #include <map>

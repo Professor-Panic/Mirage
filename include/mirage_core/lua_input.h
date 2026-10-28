@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include "raylib.h"
 #include "sol/sol.hpp"
-#include "script_log.h"
+#include "mirage_core/script_log.h"
 
 namespace lua_input_detail {
 

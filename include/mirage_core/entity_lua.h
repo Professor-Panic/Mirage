@@ -2,11 +2,11 @@
 #include <string>
 
 #include <sol/sol.hpp>
-#include "entt.hpp"
+#include "entt/entt.hpp"
 
-#include "entity_bus.h"
-#include "reflection.h"
-#include "lua_proxy.h"
+#include "mirage_core/entity_bus.h"
+#include "mirage_core/reflection.h"
+#include "mirage_core/lua_proxy.h"
 
 // Registers the entity-reference API with Lua. Call once, before any script
 // runs (and before ScriptSystem is used).

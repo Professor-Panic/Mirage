@@ -9,8 +9,8 @@
 
 #include <sol/sol.hpp>
 #include "raylib.h"
-#include "entt.hpp"
-#include "reflection.h"
+#include "entt/entt.hpp"
+#include "mirage_core/reflection.h"
 
 // C++ Value -> Lua
 inline sol::object ValueToLua(sol::state& lua, const Value& value)

@@ -1,20 +1,16 @@
 #include "raylib.h"
 #include "rui.h"
-#include "entt.hpp"
+#include "entt/entt.hpp"
 #include <string>
 #include <vector>
 
 #include <sol/sol.hpp>
+#include "mirage_core/inspector_ui.h"
+#include "mirage_core/script_system.h"
+#include "mirage_core/components.h"
 
-#include "reflection.h"
-#include "inspector_ui.h"
-#include "script_system.h"
-#include "components.h"
-#include "entity_bus.h"
-#include "entity_lua.h"
-#include "play_snapshot.h"
-#include "script_log.h"
-#include "lua_input.h"
+#include "mirage_core/play_snapshot.h"
+#include "mirage_core/runtime.h"
 // One row per entity that has a GameComponent.
 struct Row
 {
@@ -33,21 +29,10 @@ int main()
 
     InitWindow(1200, 800, "Scriptable Objects");
     SetTargetFPS(60);
-
-    entt::registry registry;
-    EntityBus entityBus(registry);   // after the registry, so it dies first
     rui::Context ui;
 
     // Keep the Lua state alive for the entire ScriptSystem lifetime.
-    sol::state lua;
-    lua.open_libraries(
-        sol::lib::base,
-        sol::lib::package,
-        sol::lib::math,
-        sol::lib::string,
-        sol::lib::table
-    );
-
+    MirageCoreRuntime core;
     entt::entity selected = entt::null;
     ui.runtime.Bind("selected", selected);
 
@@ -60,44 +45,16 @@ int main()
     // ---------------------------------------------------------
     // Reflection registration
     // ---------------------------------------------------------
-
-    Reflection reflection;
-
-    reflection.Component<TransformComponent>("Transform")
-        .Field("position", &TransformComponent::position)
-        .Field("scale", &TransformComponent::scale)
-        .Field("rotation", &TransformComponent::rotation);
-
-    reflection.Component<GameComponent>("Game")
-        .Field("name", &GameComponent::name)
-        .DefaultArgs(std::string("GameComponent"));
-    reflection.Component<ScriptComponent>("Script");
-
     // Remembers the scene when Play starts and puts it back when Play stops.
-    PlaySnapshot snapshot(registry, entityBus, reflection);
+    PlaySnapshot snapshot(core.registry, core.entityBus, core.reflection);
     Uuid selectionAtPlayStart;
 
     // ---------------------------------------------------------
     // Script system
     // ---------------------------------------------------------
-
-    entityBus.SetNameProvider(
-        [](const entt::registry& r, entt::entity e) -> std::string
-        {
-            if (const auto* g = r.try_get<GameComponent>(e))
-                return g->name;
-            return {};
-        });
-
     // Registers EntityRef and the Entities table with Lua. Must run before scripts.
-    BindEntityLua(lua, entityBus, reflection);
-    ScriptLog scriptLog;
-    BindLuaPrint(lua, scriptLog);
-    BindLuaInput(lua,scriptLog);
-    ScriptSystem scriptSystem(lua, reflection, registry, entityBus);
-
     // A script that exposes a field after the Inspector list was built.
-    scriptSystem.OnFieldsChanged([&] { ui.runtime.Invalidate("Entity_Fields"); });
+    core.scriptSystem.OnFieldsChanged([&] { ui.runtime.Invalidate("Entity_Fields"); });
 
     // ---------------------------------------------------------
     // UI
@@ -107,7 +64,7 @@ int main()
     ui.LoadMarkupFile("ui/main.rxml");
     ui.LoadStyleFile("ui/main.rcss");
 
-    Inspector inspector(ui, registry, reflection, selected, entityBus);
+    Inspector inspector(ui, core.registry, core.reflection, selected, core.entityBus);
     inspector.Watch<TransformComponent>();
     inspector.Watch<GameComponent>();
     inspector.Watch<ScriptComponent>();
@@ -117,7 +74,7 @@ int main()
     // ---------------------------------------------------------
 
     ComponentWatch<GameComponent> watchGameList(
-        registry,
+        core.registry,
         ui.runtime,
         "GameComponents"
     );
@@ -128,7 +85,7 @@ int main()
         ui.runtime.Invalidate("GameComponents");
     });
     ui.runtime.Function("clearLog",[&](){
-        scriptLog.Clear();
+        core.scriptLog.Clear();
     });
     ui.runtime.BindList(
         "GameComponents",
@@ -136,8 +93,8 @@ int main()
         {
             std::vector<Row> rows;
 
-            for (auto entity : registry.view<GameComponent>())
-                rows.push_back({entity, entityBus.IdOf(entity).ToString()});
+            for (auto entity : core.registry.view<GameComponent>())
+                rows.push_back({entity, core.entityBus.IdOf(entity).ToString()});
 
             return rows;
         },
@@ -149,25 +106,23 @@ int main()
     )
     .Via([&](Row& row) -> GameComponent&
     {
-        return registry.get<GameComponent>(row.id);
+        return core.registry.get<GameComponent>(row.id);
     })
     .Ref("name", &GameComponent::name);
 
     // ---------------------------------------------------------
     // Test entities
     // ---------------------------------------------------------
-
-    const auto entity1 = entityBus.Create();
-
-    registry.emplace<GameComponent>(entity1, "object_1");
-    registry.emplace<TransformComponent>(entity1);
-    registry.emplace<ScriptComponent>(
+    const auto entity1 = core.entityBus.Create();
+    core.registry.emplace<GameComponent>(entity1, "object_1");
+    core.registry.emplace<TransformComponent>(entity1);
+    core.registry.emplace<ScriptComponent>(
         entity1,
         "scripts/test.lua"
     );
 
-    registry.emplace<GameComponent>(
-        entityBus.Create(),
+    core.registry.emplace<GameComponent>(
+        core.entityBus.Create(),
         "object_2"
     );
 
@@ -191,11 +146,11 @@ int main()
                 // Edit -> Play. Reload first (picks up script edits from disk
                 // and exposes any new fields), then snapshot the scene as it
                 // is the moment Play begins.
-                scriptLog.Clear();
-                scriptSystem.ReloadAll();
+                core.scriptLog.Clear();
+                core.scriptSystem.ReloadAll();
 
                 snapshot.Capture();
-                selectionAtPlayStart = entityBus.IdOf(selected);
+                selectionAtPlayStart = core.entityBus.IdOf(selected);
             }
             else
             {
@@ -203,13 +158,13 @@ int main()
                 // recreated entity gets a new entt handle. If the selected
                 // entity was destroyed during Play its handle is already dead,
                 // so fall back to what was selected when Play started.
-                Uuid selectedId = entityBus.IdOf(selected);
+                Uuid selectedId = core.entityBus.IdOf(selected);
                 if (selectedId.IsNull()) selectedId = selectionAtPlayStart;
 
-                scriptSystem.UnloadAll();   // drop Lua runtimes before entities change
+                core.scriptSystem.UnloadAll();   // drop Lua runtimes before entities change
                 snapshot.Restore();         // numbers set during Play are forgotten
-                selected = entityBus.Resolve(EntityRef{selectedId});
-                scriptSystem.ReloadAll();   // fresh, not started, fields exposed
+                selected = core.entityBus.Resolve(EntityRef{selectedId});
+                core.scriptSystem.ReloadAll();   // fresh, not started, fields exposed
 
                 ui.runtime.Invalidate("GameComponents");
                 ui.runtime.Invalidate("Entity_Components");
@@ -222,15 +177,15 @@ int main()
         if (mode == Mode::Play)
         {
             // Start each script once, then Update(dt) every frame.
-            scriptSystem.UpdateScripts(dt);
+            core.scriptSystem.UpdateScripts(dt);
         }
         else
         {
             // Run each script's factory so expose() registers its fields for
             // the Inspector, but never call Start() or Update().
-            scriptSystem.EnsureLoaded();
+            core.scriptSystem.EnsureLoaded();
         }
-        if (scriptLog.ConsumeDirty()) consoleText = scriptLog.Text();
+        if (core.scriptLog.ConsumeDirty()) consoleText = core.scriptLog.Text();
 
         // Refresh inspector data after scripts have run.
         inspector.Update();
@@ -248,7 +203,7 @@ int main()
     }
 
     // Release Lua script runtimes before the Lua state is destroyed.
-    scriptSystem.UnloadAll();
+    core.scriptSystem.UnloadAll();
 
     CloseWindow();
 

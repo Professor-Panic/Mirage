@@ -6,10 +6,10 @@
 #include <utility>
 #include <vector>
 
-#include "entt.hpp"
-#include "entity_bus.h"
-#include "reflection.h"
-#include "script_system.h"   // ScriptComponent::fields
+#include "entt/entt.hpp"
+#include "mirage_core/entity_bus.h"
+#include "mirage_core/reflection.h"
+#include "mirage_core/script_system.h"   // ScriptComponent::fields
 
 // ---------------------------------------------------------------------------
 // PlaySnapshot - Unity-style "numbers are forgotten when Play stops".

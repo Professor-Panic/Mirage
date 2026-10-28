@@ -1,9 +1,9 @@
 #pragma once
 #include "raylib.h"
 #include "rui.h"
-#include "entt.hpp"
-#include "reflection.h"
-#include "script_system.h"   // ScriptComponent::fields
+#include "entt/entt.hpp"
+#include "mirage_core/reflection.h"
+#include "mirage_core/script_system.h"   // ScriptComponent::fields
 #include <memory>
 #include <optional>
 #include <string>

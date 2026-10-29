@@ -140,11 +140,16 @@ public:
         }
 
         case sol::type::userdata:
+            if (value.is<Vector2>()) return value.as<Vector2>();
+            if (value.is<Vector3>()) return value.as<Vector3>();
+            if (value.is<Vector4>()) return value.as<Vector4>();
+            if (value.is<Color>())   return value.as<Color>();
+
             if (value.is<EntityRef>())
                 return value.as<EntityRef>();
 
             throw std::runtime_error(
-                "Unsupported Lua userdata: expected an EntityRef");
+                "Unsupported Lua userdata: expected a Vector, Color or EntityRef");
 
         default:
             throw std::runtime_error(

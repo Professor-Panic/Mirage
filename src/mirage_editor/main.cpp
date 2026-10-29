@@ -247,6 +247,7 @@ int main()
     if (core.registry.view<IdComponent>().empty())
     {
         const auto entity1 = core.entityBus.Create();
+        const auto entity2=core.entityBus.Create();
         core.registry.emplace<GameComponent>(entity1, "object_1");
         core.registry.emplace<TransformComponent>(entity1);
         core.registry.emplace<ScriptComponent>(
@@ -258,8 +259,12 @@ int main()
         );
 
         core.registry.emplace<GameComponent>(
-            core.entityBus.Create(),
+            entity2,
             "object_2"
+        );
+        core.registry.emplace<ScriptComponent>(
+            entity2,
+            "scripts/spawner.lua"
         );
     }
 

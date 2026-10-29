@@ -18,14 +18,13 @@ struct GameComponent {
 
     GameComponent(std::string name) : name(std::move(name)) {}
 };
-struct SpriteComponent{
-    std::string path;
-    Color tint;
-    Vector2 pivot;
-    Vector4 source;
-    bool flipX;
-    bool flipY;
-    bool visible;
-    int layer;
-    SpriteComponent():tint(WHITE),layer(1),pivot(Vector2(0.5,0.5)){};
+struct SpriteComponent {
+    std::string path;                           // texture file, relative to the project root
+    Color   tint    = WHITE;
+    Vector2 pivot   = { 0.5f, 0.5f };           // 0..1 of the sprite's size; (0.5, 0.5) = centre
+    Vector4 source  = { 0.0f, 0.0f, 0.0f, 0.0f }; // x, y, w, h in pixels; all zero = whole texture
+    bool    flipX   = false;
+    bool    flipY   = false;
+    bool    visible = true;
+    int     layer   = 1;                        // lower draws first (behind)
 };

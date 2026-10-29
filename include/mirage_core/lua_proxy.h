@@ -11,6 +11,7 @@
 #include "raylib.h"
 #include "entt/entt.hpp"
 #include "mirage_core/reflection.h"
+#include "mirage_core/lua_functions.h"   // LuaTypeBound
 
 // C++ Value -> Lua
 inline sol::object ValueToLua(sol::state& lua, const Value& value)
@@ -21,6 +22,10 @@ inline sol::object ValueToLua(sol::state& lua, const Value& value)
 
         if constexpr (std::is_same_v<T, Vector2>)
         {
+            // The bound usertype when BindLuaUserTypes ran, else a plain table.
+            if (LuaTypeBound(lua, "Vector2"))
+                return sol::make_object(lua, v);
+
             sol::table t = lua.create_table();
             t["x"] = v.x;
             t["y"] = v.y;
@@ -28,6 +33,10 @@ inline sol::object ValueToLua(sol::state& lua, const Value& value)
         }
         else if constexpr (std::is_same_v<T, Vector3>)
         {
+            // The bound usertype when BindLuaUserTypes ran, else a plain table.
+            if (LuaTypeBound(lua, "Vector3"))
+                return sol::make_object(lua, v);
+
             sol::table t = lua.create_table();
             t["x"] = v.x;
             t["y"] = v.y;
@@ -36,6 +45,10 @@ inline sol::object ValueToLua(sol::state& lua, const Value& value)
         }
         else if constexpr (std::is_same_v<T, Vector4>)
         {
+            // The bound usertype when BindLuaUserTypes ran, else a plain table.
+            if (LuaTypeBound(lua, "Vector4"))
+                return sol::make_object(lua, v);
+
             sol::table t = lua.create_table();
             t["x"] = v.x;
             t["y"] = v.y;
@@ -45,6 +58,10 @@ inline sol::object ValueToLua(sol::state& lua, const Value& value)
         }
         else if constexpr (std::is_same_v<T, Color>)
         {
+            // The bound usertype when BindLuaUserTypes ran, else a plain table.
+            if (LuaTypeBound(lua, "Color"))
+                return sol::make_object(lua, v);
+
             sol::table t = lua.create_table();
             t["r"] = v.r;
             t["g"] = v.g;
@@ -103,8 +120,11 @@ inline Value LuaToValue(sol::object obj, const Value& current)
         }
         else if constexpr (std::is_same_v<T, Vector2>)
         {
+            if (obj.is<Vector2>())                       // usertype from BindLuaUserTypes
+                return obj.as<Vector2>();
+
             if (!obj.is<sol::table>())
-                throw std::runtime_error("Expected Vector2 table");
+                throw std::runtime_error("Expected Vector2 (or table)");
 
             sol::table t = obj.as<sol::table>();
             return Vector2{
@@ -114,8 +134,11 @@ inline Value LuaToValue(sol::object obj, const Value& current)
         }
         else if constexpr (std::is_same_v<T, Vector3>)
         {
+            if (obj.is<Vector3>())                       // usertype from BindLuaUserTypes
+                return obj.as<Vector3>();
+
             if (!obj.is<sol::table>())
-                throw std::runtime_error("Expected Vector3 table");
+                throw std::runtime_error("Expected Vector3 (or table)");
 
             sol::table t = obj.as<sol::table>();
             return Vector3{
@@ -126,8 +149,11 @@ inline Value LuaToValue(sol::object obj, const Value& current)
         }
         else if constexpr (std::is_same_v<T, Vector4>)
         {
+            if (obj.is<Vector4>())                       // usertype from BindLuaUserTypes
+                return obj.as<Vector4>();
+
             if (!obj.is<sol::table>())
-                throw std::runtime_error("Expected Vector4 table");
+                throw std::runtime_error("Expected Vector4 (or table)");
 
             sol::table t = obj.as<sol::table>();
             return Vector4{
@@ -139,8 +165,11 @@ inline Value LuaToValue(sol::object obj, const Value& current)
         }
         else if constexpr (std::is_same_v<T, Color>)
         {
+            if (obj.is<Color>())                       // usertype from BindLuaUserTypes
+                return obj.as<Color>();
+
             if (!obj.is<sol::table>())
-                throw std::runtime_error("Expected Color table");
+                throw std::runtime_error("Expected Color (or table)");
 
             sol::table t = obj.as<sol::table>();
 

@@ -3,43 +3,56 @@
     {
       "components": {
         "Game": {
-          "Name": "object_1"
+          "name": "object_1"
         },
         "Sprite": {
-          "Hidden": false,
-          "Path": "",
-          "Tint": [
-            209,
-            50,
-            50,
-            255
-          ]
-        },
-        "Transform": {
-          "Position": [
+          "flipX": false,
+          "flipY": false,
+          "layer": 1,
+          "path": "textures/Circle.png",
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "source": [
+            0.0,
             0.0,
             0.0,
             0.0
           ],
-          "Rotation": [
+          "tint": [
+            255,
+            0,
+            0,
+            255
+          ],
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            600.0,
+            400.0,
+            0.0
+          ],
+          "rotation": [
             0.0,
             0.0,
             0.0,
             1.0
           ],
-          "Scale": [
+          "scale": [
             1.0,
             1.0,
             1.0
           ]
         }
       },
-      "id": "8f520ff3-47b0-4f83-a144-38f0a20c2dde",
+      "id": "e476819b-2f04-49eb-ac16-697859c18b0e",
       "script": {
         "fields": {
           "speed": {
             "type": "Int",
-            "value": 5
+            "value": 500
           },
           "target": {
             "type": "EntityRef",
@@ -52,10 +65,19 @@
     {
       "components": {
         "Game": {
-          "Name": "object_2"
+          "name": "object_2"
         }
       },
-      "id": "53f8721c-3409-402a-8928-4231ecaaa7b9"
+      "id": "95bcd29d-6498-4053-b61a-f8bdb97b1c86",
+      "script": {
+        "fields": {
+          "Test": {
+            "type": "Int",
+            "value": 0
+          }
+        },
+        "path": "scripts/spawner.lua"
+      }
     }
   ],
   "version": 1

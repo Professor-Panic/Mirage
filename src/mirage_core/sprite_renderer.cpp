@@ -17,14 +17,14 @@ void SpriteRenderer::Draw(entt::registry& registry)
 
     // 2. Sort by layer, then by z. Stable, so equal sprites don't flicker.
     std::stable_sort(items_.begin(), items_.end(),
-        [](const Item& a, const Item& b)
+        [](const DrawItem& a, const DrawItem& b)
         {
             if (a.layer != b.layer) return a.layer < b.layer;
             return a.z < b.z;
         });
 
     // 3. Draw in that order.
-    for (const Item& item : items_)
+    for (const DrawItem& item : items_)
     {
         const TransformComponent& tf     = view.get<TransformComponent>(item.entity);
         const SpriteComponent&    sprite = view.get<SpriteComponent>(item.entity);

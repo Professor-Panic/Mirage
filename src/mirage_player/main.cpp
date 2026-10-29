@@ -6,6 +6,8 @@
 
 #include "mirage_core/runtime.h"
 #include "mirage_core/serialise.h"
+#include "mirage_core/asset_manager.h"
+#include "mirage_core/sprite_renderer.h"
 #include "mirage_core/line_socket.h"
 #include "mirage_player/cerr_tee.h"
 
@@ -91,6 +93,9 @@ int main(int argc, char** argv)
     if (editor.Connected())
         editor.Send(json{{"type", "ready"}, {"version", 1}}.dump());
 
+    //Asset Manager stuff
+    AssetManager assetManager;
+    SpriteRenderer spriteRenderer=SpriteRenderer(assetManager);
     // ---- main loop: fixed-timestep update, draw at the display's rate ----
     const float step = 1.0f / 60.0f;
     float acc = 0.0f;
@@ -132,10 +137,11 @@ int main(int argc, char** argv)
 
         BeginDrawing();
         ClearBackground(BLACK);
+        spriteRenderer.Draw(core.registry);
         DrawFPS(10, 10);
         EndDrawing();
     }
-
+    assetManager.UnloadAll();
     core.scriptSystem.UnloadAll();
     CloseWindow();
     return 0;

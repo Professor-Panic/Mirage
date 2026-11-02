@@ -3,13 +3,13 @@
     {
       "components": {
         "Game": {
-          "name": "object_1"
+          "name": "Entity"
         },
         "Sprite": {
           "flipX": false,
           "flipY": false,
           "layer": 1,
-          "path": "textures/Circle.png",
+          "path": "textures/Mechanic guy.png",
           "pivot": [
             0.5,
             0.5
@@ -22,8 +22,8 @@
           ],
           "tint": [
             255,
-            0,
-            0,
+            255,
+            255,
             255
           ],
           "visible": true
@@ -41,43 +41,54 @@
             1.0
           ],
           "scale": [
+            10.0,
+            10.0,
+            1.0
+          ]
+        }
+      },
+      "id": "3fa30f47-a832-44b4-95ec-cb58d98884f9",
+      "scripts": [
+        {
+          "fields": {
+            "speed": {
+              "type": "Int",
+              "value": 500
+            },
+            "target": {
+              "type": "EntityRef",
+              "value": ""
+            }
+          },
+          "path": "scripts/test.lua"
+        }
+      ]
+    },
+    {
+      "components": {
+        "Game": {
+          "name": "2020"
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
             1.0,
             1.0,
             1.0
           ]
         }
       },
-      "id": "e476819b-2f04-49eb-ac16-697859c18b0e",
-      "script": {
-        "fields": {
-          "speed": {
-            "type": "Int",
-            "value": 500
-          },
-          "target": {
-            "type": "EntityRef",
-            "value": ""
-          }
-        },
-        "path": "scripts/test.lua"
-      }
-    },
-    {
-      "components": {
-        "Game": {
-          "name": "object_2"
-        }
-      },
-      "id": "95bcd29d-6498-4053-b61a-f8bdb97b1c86",
-      "script": {
-        "fields": {
-          "Test": {
-            "type": "Int",
-            "value": 0
-          }
-        },
-        "path": "scripts/spawner.lua"
-      }
+      "id": "d6972d53-fbea-4a5a-a5ac-25073e1f96f0"
     }
   ],
   "version": 1

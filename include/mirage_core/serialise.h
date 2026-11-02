@@ -205,12 +205,17 @@ inline json SaveScene(entt::registry& reg, const EntityBus& bus, const Reflectio
         }
         ent["components"] = std::move(comps);
 
+        // Every script on the entity: [{ "path": ..., "fields": {...} }, ...]
         if (const auto* sc = reg.try_get<ScriptComponent>(e)) {
-            json fields = json::object();
-            for (const auto& [name, value] : sc->fields)
-                fields[name] = { {"type",  FieldTypeName(TypeOfValue(value))},
-                                 {"value", ValueToJson(value, bus)} };
-            ent["script"] = { {"path", sc->path}, {"fields", std::move(fields)} };
+            json scripts = json::array();
+            for (const auto& [path, values] : sc->scripts) {
+                json fields = json::object();
+                for (const auto& [name, value] : values)
+                    fields[name] = { {"type",  FieldTypeName(TypeOfValue(value))},
+                                     {"value", ValueToJson(value, bus)} };
+                scripts.push_back({ {"path", path}, {"fields", std::move(fields)} });
+            }
+            ent["scripts"] = std::move(scripts);
         }
 
         root["entities"].push_back(std::move(ent));
@@ -297,12 +302,25 @@ inline LoadResult LoadScene(entt::registry& reg, EntityBus& bus,
                 }
             }
 
-            if (ent.contains("script") && ent["script"].is_object()) {
-                const json& s = ent["script"];
-                if (!s.contains("path") || !s["path"].is_string()) {
-                    res.warnings.push_back(who + ": script without a path");
-                } else {
-                    auto& sc = reg.emplace_or_replace<ScriptComponent>(p.e, s["path"].get<std::string>());
+            // Scripts: the current "scripts" array, or the older single "script"
+            // object that scenes saved before multi-script support still use.
+            {
+                std::vector<const json*> scriptJsons;
+                if (ent.contains("scripts") && ent["scripts"].is_array())
+                    for (const json& s : ent["scripts"]) scriptJsons.push_back(&s);
+                else if (ent.contains("script") && ent["script"].is_object())
+                    scriptJsons.push_back(&ent["script"]);
+
+                for (const json* sp : scriptJsons) {
+                    const json& s = *sp;
+                    if (!s.is_object() || !s.contains("path") || !s["path"].is_string()) {
+                        res.warnings.push_back(who + ": script without a path");
+                        continue;
+                    }
+
+                    auto& sc = reg.get_or_emplace<ScriptComponent>(p.e);
+                    auto& fieldsOut = sc.scripts[s["path"].get<std::string>()];
+
                     if (s.contains("fields") && s["fields"].is_object()) {
                         for (const auto& [fname, fj] : s["fields"].items()) {
                             FieldType t;
@@ -314,7 +332,7 @@ inline LoadResult LoadScene(entt::registry& reg, EntityBus& bus,
                                 res.warnings.push_back(who + ": bad script field '" + fname + "'");
                                 continue;
                             }
-                            sc.fields[fname] = std::move(v);
+                            fieldsOut[fname] = std::move(v);
                         }
                     }
                 }

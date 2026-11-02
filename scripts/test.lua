@@ -1,6 +1,3 @@
-function Lerp(a,b,t)
-   return (1-t)*a+t*b 
-end
 return function(entity)
     local transform=entity:GetComponent("Transform")
     local left=false;

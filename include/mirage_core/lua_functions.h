@@ -54,6 +54,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -402,153 +403,213 @@ std::string ToText(const char* typeName, const V& v)
     return s + ")";
 }
 
-template <class V>
-void ConfigureVector(sol::usertype<V>& t, const char* typeName)
-{
-    // sol::property (not `t["x"] = &V::x`): binding a raw member pointer does not
-    // compile with clang + this sol2, and this behaves the same everywhere.
-    const auto field = [](auto member)
-    {
-        return sol::property(
-            [member](const V& v) { return v.*member; },
-            [member](V& v, float f) { v.*member = f; });
-    };
+// Field accessors for sol::property (see ConfigureVector).
+template <class V, float V::* Member>
+float GetField(const V& v) { return v.*Member; }
 
-    t["x"] = field(&V::x);
-    t["y"] = field(&V::y);
-    if constexpr (!kIsVec2<V>) t["z"] = field(&V::z);
-    if constexpr (kIsVec4<V>)  t["w"] = field(&V::w);
+template <class V, float V::* Member>
+void SetField(V& v, float f) { v.*Member = f; }
+
+template <unsigned char Color::* Member>
+int GetChannel(const Color& c) { return static_cast<int>(c.*Member); }
+
+template <unsigned char Color::* Member>
+void SetChannel(Color& c, double v) { c.*Member = Channel(v); }
+
+// ---------------------------------------------------------------------------
+// Everything bound to Lua below is a plain function (or function template)
+// bound by pointer, never a lambda.
+//
+// Why: sol keeps per-callable bookkeeping in function-local statics
+// (usertype_traits<F>::metatable, demangle<F>), keyed by the callable's type.
+// For a lambda defined inside a function template, MinGW GCC 15 emits code that
+// references those statics but not the statics themselves, so linking fails
+// with "undefined reference to guard variable for sol::usertype_traits<...>".
+// Function pointers have no lambda types in their names, so the problem cannot
+// occur. (It is also why the binders below take no name argument: TypeName<V>()
+// supplies it.)
+// ---------------------------------------------------------------------------
+
+template <class V> const char* TypeName();
+template <> inline const char* TypeName<Vector2>() { return "Vector2"; }
+template <> inline const char* TypeName<Vector3>() { return "Vector3"; }
+template <> inline const char* TypeName<Vector4>() { return "Vector4"; }
+
+// ----- constructors -----
+template <class V> V MakeZero() { return V{}; }
+inline Vector2 MakeVector2(float x, float y)                   { return Vector2{ x, y }; }
+inline Vector3 MakeVector3(float x, float y, float z)          { return Vector3{ x, y, z }; }
+inline Vector4 MakeVector4(float x, float y, float z, float w) { return Vector4{ x, y, z, w }; }
+
+// ----- operators -----
+template <class V> V OpAdd(const sol::object& a, const sol::object& b)
+{ return BinaryOp<V>(TypeName<V>(), "add", a, b, std::plus<float>()); }
+
+template <class V> V OpSub(const sol::object& a, const sol::object& b)
+{ return BinaryOp<V>(TypeName<V>(), "subtract", a, b, std::minus<float>()); }
+
+template <class V> V OpMul(const sol::object& a, const sol::object& b)
+{ return BinaryOp<V>(TypeName<V>(), "multiply", a, b, std::multiplies<float>()); }
+
+template <class V> V OpDiv(const sol::object& a, const sol::object& b)
+{ return BinaryOp<V>(TypeName<V>(), "divide", a, b, std::divides<float>()); }
+
+template <class V> V OpNeg(const V& v) { return Map(v, std::negate<float>()); }
+
+// Lua only calls __eq when both sides are userdata, but they need not both be
+// this type (Vector3(1,2,3) == Color(1,2,3)), so compare by object.
+template <class V> bool OpEq(const sol::object& a, const sol::object& b)
+{ return a.is<V>() && b.is<V>() && Equal(a.as<V>(), b.as<V>()); }
+
+template <class V> std::string OpToString(const V& v) { return ToText<V>(TypeName<V>(), v); }
+
+// ----- methods -----
+template <class V> float VecLength(const V& v)    { return std::sqrt(Dot(v, v)); }
+template <class V> float VecLengthSqr(const V& v) { return Dot(v, v); }
+template <class V> V     VecCopy(const V& v)      { return v; }
+
+template <class V> V VecNormalize(const V& v)
+{
+    const float length = std::sqrt(Dot(v, v));
+    if (length > 0.0f)
+        return Map(v, [length](float x) { return x / length; });
+    return V{};
+}
+
+template <class V> float VecDot(const V& a, const sol::object& o)
+{ return Dot(a, Need<V>(TypeName<V>(), "Dot", o)); }
+
+template <class V> float VecDistance(const V& a, const sol::object& o)
+{
+    const V d = Combine(a, Need<V>(TypeName<V>(), "Distance", o), std::minus<float>());
+    return std::sqrt(Dot(d, d));
+}
+
+template <class V> V VecLerp(const V& a, const sol::object& o, float amount)
+{
+    const V b = Need<V>(TypeName<V>(), "Lerp", o);
+    return Combine(a, b, [amount](float x, float y) { return x + (y - x) * amount; });
+}
+
+inline Vector3 VecCross(const Vector3& a, const sol::object& o)
+{
+    const Vector3 b = Need<Vector3>("Vector3", "Cross", o);
+    return Vector3{ a.y * b.z - a.z * b.y,
+                    a.z * b.x - a.x * b.z,
+                    a.x * b.y - a.y * b.x };
+}
+
+template <class V>
+void ConfigureVector(sol::usertype<V>& t)
+{
+    t["x"] = sol::property(&GetField<V, &V::x>, &SetField<V, &V::x>);
+    t["y"] = sol::property(&GetField<V, &V::y>, &SetField<V, &V::y>);
+    if constexpr (!kIsVec2<V>) t["z"] = sol::property(&GetField<V, &V::z>, &SetField<V, &V::z>);
+    if constexpr (kIsVec4<V>)  t["w"] = sol::property(&GetField<V, &V::w>, &SetField<V, &V::w>);
 
     // Vector2(), Vector2(x, y)  /  Vector3(), Vector3(x, y, z)  /  ...
     if constexpr (kIsVec2<V>)
     {
-        auto make = sol::factories([] { return V{}; },
-                                   [](float x, float y) { return V{ x, y }; });
+        auto make = sol::factories(&MakeZero<V>, &MakeVector2);
         t[sol::call_constructor] = make;
         t["new"] = make;
     }
     else if constexpr (kIsVec3<V>)
     {
-        auto make = sol::factories([] { return V{}; },
-                                   [](float x, float y, float z) { return V{ x, y, z }; });
+        auto make = sol::factories(&MakeZero<V>, &MakeVector3);
         t[sol::call_constructor] = make;
         t["new"] = make;
     }
     else
     {
-        auto make = sol::factories([] { return V{}; },
-                                   [](float x, float y, float z, float w) { return V{ x, y, z, w }; });
+        auto make = sol::factories(&MakeZero<V>, &MakeVector4);
         t[sol::call_constructor] = make;
         t["new"] = make;
     }
 
-    t[sol::meta_function::addition] = [typeName](const sol::object& a, const sol::object& b)
-    { return BinaryOp<V>(typeName, "add", a, b, [](float x, float y) { return x + y; }); };
+    t[sol::meta_function::addition]       = &OpAdd<V>;
+    t[sol::meta_function::subtraction]    = &OpSub<V>;
+    t[sol::meta_function::multiplication] = &OpMul<V>;
+    t[sol::meta_function::division]       = &OpDiv<V>;
+    t[sol::meta_function::unary_minus]    = &OpNeg<V>;
+    t[sol::meta_function::equal_to]       = &OpEq<V>;
+    t[sol::meta_function::to_string]      = &OpToString<V>;
 
-    t[sol::meta_function::subtraction] = [typeName](const sol::object& a, const sol::object& b)
-    { return BinaryOp<V>(typeName, "subtract", a, b, [](float x, float y) { return x - y; }); };
-
-    t[sol::meta_function::multiplication] = [typeName](const sol::object& a, const sol::object& b)
-    { return BinaryOp<V>(typeName, "multiply", a, b, [](float x, float y) { return x * y; }); };
-
-    t[sol::meta_function::division] = [typeName](const sol::object& a, const sol::object& b)
-    { return BinaryOp<V>(typeName, "divide", a, b, [](float x, float y) { return x / y; }); };
-
-    t[sol::meta_function::unary_minus] = [](const V& v)
-    { return Map(v, [](float x) { return -x; }); };
-
-    // Lua only calls __eq when both sides are userdata, but they need not both
-    // be this type (Vector3(1,2,3) == Color(1,2,3)), so compare by object.
-    t[sol::meta_function::equal_to] = [](const sol::object& a, const sol::object& b)
-    { return a.is<V>() && b.is<V>() && Equal(a.as<V>(), b.as<V>()); };
-
-    t[sol::meta_function::to_string] = [typeName](const V& v) { return ToText<V>(typeName, v); };
-
-    t["Length"]    = [](const V& v) { return std::sqrt(Dot(v, v)); };
-    t["LengthSqr"] = [](const V& v) { return Dot(v, v); };
-    t["Copy"]      = [](const V& v) { return v; };
-
-    t["Normalize"] = [](const V& v)
-    {
-        const float length = std::sqrt(Dot(v, v));
-        return length > 0.0f ? Map(v, [length](float x) { return x / length; }) : V{};
-    };
-
-    t["Dot"] = [typeName](const V& a, const sol::object& o)
-    { return Dot(a, Need<V>(typeName, "Dot", o)); };
-
-    t["Distance"] = [typeName](const V& a, const sol::object& o)
-    {
-        const V d = Combine(a, Need<V>(typeName, "Distance", o), [](float x, float y) { return x - y; });
-        return std::sqrt(Dot(d, d));
-    };
-
-    t["Lerp"] = [typeName](const V& a, const sol::object& o, float amount)
-    {
-        const V b = Need<V>(typeName, "Lerp", o);
-        return Combine(a, b, [amount](float x, float y) { return x + (y - x) * amount; });
-    };
+    t["Length"]    = &VecLength<V>;
+    t["LengthSqr"] = &VecLengthSqr<V>;
+    t["Copy"]      = &VecCopy<V>;
+    t["Normalize"] = &VecNormalize<V>;
+    t["Dot"]       = &VecDot<V>;
+    t["Distance"]  = &VecDistance<V>;
+    t["Lerp"]      = &VecLerp<V>;
 
     if constexpr (kIsVec3<V>)
-    {
-        t["Cross"] = [typeName](const V& a, const sol::object& o)
-        {
-            const V b = Need<V>(typeName, "Cross", o);
-            return V{ a.y * b.z - a.z * b.y,
-                      a.z * b.x - a.x * b.z,
-                      a.x * b.y - a.y * b.x };
-        };
-    }
+        t["Cross"] = &VecCross;
+}
+
+// ----- Color -----
+inline Color ColorNew0() { return Color{ 255, 255, 255, 255 }; }
+inline Color ColorNew3(double r, double g, double b)
+{ return Color{ Channel(r), Channel(g), Channel(b), 255 }; }
+inline Color ColorNew4(double r, double g, double b, double a)
+{ return Color{ Channel(r), Channel(g), Channel(b), Channel(a) }; }
+
+inline bool ColorEq(const sol::object& x, const sol::object& y)
+{
+    if (!x.is<Color>() || !y.is<Color>()) return false;
+    const Color a = x.as<Color>();
+    const Color b = y.as<Color>();
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+inline std::string ColorToString(const Color& c)
+{
+    return "Color(" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " +
+           std::to_string(c.b) + ", " + std::to_string(c.a) + ")";
+}
+
+inline Color ColorCopy(const Color& c) { return c; }
+
+inline Color ColorWithAlpha(const Color& c, double a) { return Color{ c.r, c.g, c.b, Channel(a) }; }
+
+inline Color ColorLerp(const Color& a, const sol::object& o, double amount)
+{
+    Color b{};
+    if (!ToColor(o, b))
+        throw sol::error("Color:Lerp expects a Color, got " + Describe(o));
+
+    const auto mix = [amount](unsigned char x, unsigned char y) { return Channel(x + (y - x) * amount); };
+    return Color{ mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b), mix(a.a, b.a) };
 }
 
 inline void ConfigureColor(sol::usertype<Color>& t)
 {
-    const auto channel = [](auto member)
-    {
-        return sol::property(
-            [member](const Color& c) { return static_cast<int>(c.*member); },
-            [member](Color& c, double v) { c.*member = Channel(v); });
-    };
+    t["r"] = sol::property(&GetChannel<&Color::r>, &SetChannel<&Color::r>);
+    t["g"] = sol::property(&GetChannel<&Color::g>, &SetChannel<&Color::g>);
+    t["b"] = sol::property(&GetChannel<&Color::b>, &SetChannel<&Color::b>);
+    t["a"] = sol::property(&GetChannel<&Color::a>, &SetChannel<&Color::a>);
 
-    t["r"] = channel(&Color::r);
-    t["g"] = channel(&Color::g);
-    t["b"] = channel(&Color::b);
-    t["a"] = channel(&Color::a);
-
-    auto make = sol::factories(
-        [] { return Color{ 255, 255, 255, 255 }; },
-        [](double r, double g, double b) { return Color{ Channel(r), Channel(g), Channel(b), 255 }; },
-        [](double r, double g, double b, double a) { return Color{ Channel(r), Channel(g), Channel(b), Channel(a) }; });
+    auto make = sol::factories(&ColorNew0, &ColorNew3, &ColorNew4);
     t[sol::call_constructor] = make;
     t["new"] = make;
 
-    t[sol::meta_function::equal_to] = [](const sol::object& x, const sol::object& y)
-    {
-        if (!x.is<Color>() || !y.is<Color>()) return false;
-        const Color a = x.as<Color>();
-        const Color b = y.as<Color>();
-        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
-    };
+    t[sol::meta_function::equal_to]  = &ColorEq;
+    t[sol::meta_function::to_string] = &ColorToString;
 
-    t[sol::meta_function::to_string] = [](const Color& c)
-    {
-        return "Color(" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " +
-               std::to_string(c.b) + ", " + std::to_string(c.a) + ")";
-    };
-
-    t["Copy"] = [](const Color& c) { return c; };
-
-    t["WithAlpha"] = [](const Color& c, double a) { return Color{ c.r, c.g, c.b, Channel(a) }; };
-
-    t["Lerp"] = [](const Color& a, const sol::object& o, double amount)
-    {
-        Color b{};
-        if (!ToColor(o, b))
-            throw sol::error("Color:Lerp expects a Color, got " + Describe(o));
-        const auto mix = [amount](unsigned char x, unsigned char y) { return Channel(x + (y - x) * amount); };
-        return Color{ mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b), mix(a.a, b.a) };
-    };
+    t["Copy"]      = &ColorCopy;
+    t["WithAlpha"] = &ColorWithAlpha;
+    t["Lerp"]      = &ColorLerp;
 }
+
+// ----- math helpers (bound by BindLuaFunctions) -----
+inline double MathClamp(double x, double lo, double hi)
+{
+    if (lo > hi) std::swap(lo, hi);
+    return std::min(std::max(x, lo), hi);
+}
+inline double MathLerp(double a, double b, double t) { return a + (b - a) * t; }
+inline double MathSign(double x) { return x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0); }
+inline double MathRound(double x) { return std::round(x); }      // halves round away from zero
 
 }  // namespace lua_functions_detail
 
@@ -579,25 +640,21 @@ int BindValueAlternative(sol::state& lua)
     }
     else if constexpr (std::is_same_v<T, Vector2>)
     {
-        return BindLuaUserType<Vector2>(lua, "Vector2",
-            [](sol::usertype<Vector2>& t) { ConfigureVector<Vector2>(t, "Vector2"); });
+        return BindLuaUserType<Vector2>(lua, "Vector2", &ConfigureVector<Vector2>);
     }
     else if constexpr (std::is_same_v<T, Vector3>)
     {
-        return BindLuaUserType<Vector3>(lua, "Vector3",
-            [](sol::usertype<Vector3>& t) { ConfigureVector<Vector3>(t, "Vector3"); });
+        return BindLuaUserType<Vector3>(lua, "Vector3", &ConfigureVector<Vector3>);
     }
     else if constexpr (std::is_same_v<T, Vector4>)
     {
         // Vector4 is also raylib's Quaternion (same type), so
         // transform.rotation is a Vector4 too.
-        return BindLuaUserType<Vector4>(lua, "Vector4",
-            [](sol::usertype<Vector4>& t) { ConfigureVector<Vector4>(t, "Vector4"); });
+        return BindLuaUserType<Vector4>(lua, "Vector4", &ConfigureVector<Vector4>);
     }
     else if constexpr (std::is_same_v<T, Color>)
     {
-        return BindLuaUserType<Color>(lua, "Color",
-            [](sol::usertype<Color>& t) { ConfigureColor(t); });
+        return BindLuaUserType<Color>(lua, "Color", &ConfigureColor);
     }
     else
     {
@@ -627,28 +684,13 @@ inline int BindLuaUserTypes(sol::state& lua)
 // ---------------------------------------------------------------------------
 inline int BindLuaFunctions(sol::state& lua)
 {
+    using namespace lua_functions_detail;
     int bound = 0;
 
-    bound += BindLuaFunction(lua, "math.clamp", [](double x, double lo, double hi)
-    {
-        if (lo > hi) std::swap(lo, hi);
-        return std::min(std::max(x, lo), hi);
-    });
-
-    bound += BindLuaFunction(lua, "math.lerp", [](double a, double b, double t)
-    {
-        return a + (b - a) * t;
-    });
-
-    bound += BindLuaFunction(lua, "math.sign", [](double x)
-    {
-        return x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0);
-    });
-
-    bound += BindLuaFunction(lua, "math.round", [](double x)
-    {
-        return std::round(x);        // halves round away from zero
-    });
+    bound += BindLuaFunction(lua, "math.clamp", &MathClamp);
+    bound += BindLuaFunction(lua, "math.lerp",  &MathLerp);
+    bound += BindLuaFunction(lua, "math.sign",  &MathSign);
+    bound += BindLuaFunction(lua, "math.round", &MathRound);
 
     return bound;
 }

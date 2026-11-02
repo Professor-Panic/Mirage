@@ -1,4 +1,9 @@
 <UI class="app">
+    <Image
+    class="editor-texture"
+    texture="{inspector_texture}"
+    flipY="true"
+    />
     <Container class="hierachy" direction="row">
         <for each="{GameComponents}" as="gc" state="editing=false">
             <!-- Drag source: carries the entity's stable uuid, not the runtime handle. -->
@@ -11,7 +16,7 @@
                 dragType="entity"
                 dragValue="{gc.uuid}"
                 onClick="{selected = gc.id}"
-                onKey="F2: editing = true"
+                onKey="F2: editing = true; Delete: deleteEntity()"
             />
 
             <StringInput sync="true"
@@ -25,43 +30,70 @@
     </Container>
 
     <!-- Play / Edit toggle. `mode` is the C++ enum: 0 = Edit, 1 = Play. -->
-    <Container class="toolbar" direction="row">
-        <Button class="mode-button" sync="true" disabled="{mode == 1}" onClick="{mode = 1}">Play</Button>
-        <Button class="mode-button" sync="true" disabled="{mode == 0}" onClick="{mode = 0}">Stop</Button>
-        <Label class="mode-status" sync="true">{mode == 1 ? 'Playing' : 'Editing'}</Label>
+    <Container class="top-strip toolbar-strip" direction="row">
+        <Container class="toolbar" direction="row">
+            <Button class="mode-button" sync="true" disabled="{mode == 1}" onClick="{mode = 1}">Play</Button>
+            <Button class="mode-button" sync="true" disabled="{mode == 0}" onClick="{mode = 0}">Stop</Button>
+            <Label class="mode-status" sync="true">{mode == 1 ? 'Playing' : 'Editing'}</Label>
+        </Container>
     </Container>
 
     <!-- Main menu: sits above the Play / Stop toolbar. -->
-    <Container class="menu-bar" direction="row">
-        <Container class="file-menu" direction="column">
-            <Button class="file-menu-button" onClick="{toggleFileMenu}">File</Button>
-            <Container class="file-dropdown" direction="column" if="{file_menu_open == 1}">
-                <Button class="file-menu-item" onClick="{openSceneDialog}">Open...</Button>
-                <Button class="file-menu-item" onClick="{saveScene}">Save</Button>
-                <Button class="file-menu-item" onClick="{saveSceneAs}">Save As...</Button>
+    <Container class="top-strip menu-strip" direction="row">
+        <Container class="menu-bar" direction="row">
+            <Container class="file-menu" direction="column">
+                <Button class="file-menu-button" onClick="{toggleFileMenu}">File</Button>
+                <Container class="file-dropdown" direction="column" if="{file_menu_open == 1}">
+                    <Button class="file-menu-item" onClick="{openSceneDialog}">Open...</Button>
+                    <Button class="file-menu-item" onClick="{saveScene}" onKey="Ctrl+S: {saveScene}">Save</Button>
+                    <Button class="file-menu-item" onClick="{saveSceneAs}">Save As...</Button>
+                </Container>
             </Container>
         </Container>
     </Container>
 
-    <Container class="inspector" direction="column">
+    <Container class="inspector" direction="column" showScrollbars="true">
         <for each="{Entity_Fields}" as="f">
             <Label if="{f.first}" class="inspector-component">{f.component}</Label>
-            <Row if="{!f.isRef}" class="inspector-row">
+            <!-- Header of one script on the entity: its path and a button that detaches it. -->
+            <Row if="{f.isScript}" class="inspector-row inspector-script">
+                <Label class="inspector-script-name">{f.label}</Label>
+                <Button class="inspector-script-remove" onClick="{removeScript()}">x</Button>
+            </Row>
+            <Row if="{!f.isRef && !f.isScript}" class="inspector-row">
                 <Label class="inspector-label">{f.label}:</Label>
                 <Input class="class-inspector-field" value="{f.value}" sync="true" onSubmit="{refreshUI()}" />
             </Row>
-            <Row if="{f.isRef}" class="inspector-row inspector-ref" dropTypes="entity" onDrop="f.value = $event.value.text">
+            <Row if="{f.isRef && !f.isScript}" class="inspector-row inspector-ref" dropTypes="entity" onDrop="f.value = $event.value.text">
                 <Label class="inspector-label">{f.label}:</Label>
                 <Label class="inspector-ref-name" sync="true">{f.display}</Label>
                 <Button class="inspector-ref-clear" onClick="{f.value = ''}">x</Button>
             </Row>
         </for>
+        <!-- Like Unity: always at the end of the inspector. Opens the same dropdown as a right-click. -->
+        <Button class="add-component-button" onClick="{openAddMenu}">Add Component</Button>
     </Container>
 
     <Container class="console">
         <Button class="console-clear" onClick="{clearLog()}">Clear Console</Button>
         <Container class="console-scroll" showScrollbars="true" followTail="true">
             <Label class="console-text" sync="true">{console_text}</Label>
+        </Container>
+    </Container>
+
+    <!-- Right-click menu for the hierarchy (mirage_editor/editor_menus.h). -->
+    <Container class="hier-menu" if="{hier_menu_open == 1}" direction="column">
+        <Button class="hier-menu-item" onClick="{createEntity}">Create Entity</Button>
+    </Container>
+
+    <!-- Add Component dropdown: search box + one button per component.
+         Buttons are filtered live through the `cls` class (sync="true"), no rebuild per keystroke. -->
+    <Container class="add-menu" if="{add_menu_open == 1}" direction="column">
+        <Input class="add-menu-search" value="{add_filter}" sync="true" />
+        <Container class="add-menu-list" direction="column" showScrollbars="true">
+            <for each="{AddComponentChoices}" as="c">
+                <Button class="add-menu-item {c.cls}" sync="true" onClick="{addComponentChoice()}">{c.name}</Button>
+            </for>
         </Container>
     </Container>
 

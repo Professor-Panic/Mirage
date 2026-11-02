@@ -15,7 +15,8 @@
     border-width: 4px;
     font-family: var(--font-main);
     padding: 8px;
-    min-height: 500px;
+    height: 60%;                /* same band as the inspector: ends where the console starts */
+    overflow: auto;
 }
 
 .class-inspector-names {
@@ -118,16 +119,23 @@
     width: 24px;
 }
 
-
 /* ------------------------------------------------------------------ */
 /* Play / Edit toolbar                                                */
 /* ------------------------------------------------------------------ */
 
+/* Full-width, transparent strips that centre the real bar at any window size. */
+.top-strip {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    flex-direction: row;
+    justify-content: center;
+}
+.menu-strip    { top: 0%; }
+.toolbar-strip { top: 5%; }
+
 .toolbar {
     background-color: white;
-    position: absolute;
-    top: 5%;
-    left: 40%;
     font-family: var(--font-main);
     font-size: 14;
     padding: 6px;
@@ -190,9 +198,6 @@
 /* File menu                                                           */
 /* ------------------------------------------------------------------ */
 .menu-bar {
-    position: absolute;
-    top: 0%;
-    left: 40%;
     flex-direction: row;
     align-items: flex-start;
     background-color: white;
@@ -300,4 +305,110 @@
 }
 .file-dialog-action {
     width: 90px;
+}
+.editor-texture {
+    position: absolute;
+    left: 15%;
+    top: 10%;
+    width: 65%;
+    height: 60%;
+}
+
+/* ------------------------------------------------------------------ */
+/* Scripts in the inspector                                            */
+/* ------------------------------------------------------------------ */
+.inspector-script {
+    align-items: center;
+    background-color: rgb(235, 235, 245);
+}
+.inspector-script-name {
+    flex-grow: 1;
+    color: black;
+}
+.inspector-script-remove {
+    width: 24px;
+}
+.add-component-button {
+    width: 100%;
+    height: 30px;
+    margin-top: 10px;
+    color: black;
+    flex-shrink: 0; 
+}
+
+/* ------------------------------------------------------------------ */
+/* Right-click menus (mirage_editor/editor_menus.h)                     */
+/* ------------------------------------------------------------------ */
+/* left/top/width/height are written into .mirage/menu_position.rcss every
+   time a menu opens (so it appears at the cursor). The values here are only
+   the fallback if that file can't be written. */
+.hier-menu {
+    position: absolute;
+    left: 5%;
+    top: 12%;
+    width: 170px;
+    height: 44px;
+    padding: 4px;
+    flex-direction: column;
+    background-color: white;
+    border-width: 1px;
+    border-color: rgb(150, 150, 150);
+    border-radius: 6px;
+    color: black;
+    font-family: var(--font-main);
+}
+.hier-menu-item {
+    width: 100%;
+    height: 30px;
+    color: black;
+    text-align: left;
+}
+
+.add-menu {
+    position: absolute;
+    right: 0;                   /* hug the right edge instead of left:80% + 240px overflowing */
+    top: 20%;
+    width: 240px;
+    height: 40%;
+    min-height: 240px;
+    padding: 6px;
+    gap: 6px;
+    flex-direction: column;
+    background-color: white;
+    border-width: 1px;
+    border-color: rgb(150, 150, 150);
+    border-radius: 6px;
+    color: black;
+    font-family: var(--font-main);
+}
+.add-menu-search {
+    width: 100%;
+    height: 28px;
+    color: black;
+    background-color: white;
+}
+.add-menu-list {
+    width: 100%;
+    height: 80%;                /* explicit (non-auto), so it scrolls instead of growing */
+    flex-direction: column;
+    overflow: auto;
+    gap: 2px;
+    scrollbar-size: 10px;
+    background-color: rgb(248, 248, 248);
+}
+.add-menu-list::scrollbar {
+    background-color: rgb(210, 210, 210);
+}
+.add-menu-list::scrollbar-thumb {
+    background-color: rgb(120, 120, 130);
+}
+.add-menu-item {
+    width: 100%;
+    height: 28px;
+    color: black;
+    text-align: left;
+}
+/* Components that are already on the entity, or don't match the search. */
+.add-menu-hidden {
+    display: none;
 }

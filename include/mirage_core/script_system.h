@@ -4,6 +4,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -17,20 +18,38 @@
 #include "mirage_core/lua_proxy.h"
 #include "mirage_core/entity_bus.h"
 
+// A list of scripts on one entity. The map key is the script's path; the value
+// holds that script's exposed fields, so two scripts never share (or fight over)
+// a field name. Each path can appear once per entity.
 struct ScriptComponent
 {
-    std::string path;
-    std::map<std::string, Value> fields;
+    std::map<std::string, std::map<std::string, Value>> scripts;
 
-    explicit ScriptComponent(std::string name)
-        : path(std::move(name))
+    ScriptComponent() = default;
+
+    // Convenience for the common case of one script: ScriptComponent("a.lua").
+    explicit ScriptComponent(std::string path)
     {
+        scripts.try_emplace(std::move(path));
     }
+
+    bool Has(const std::string& path) const { return scripts.count(path) != 0; }
+
+    // false if the script is already attached or the path is empty.
+    bool Add(const std::string& path)
+    {
+        return !path.empty() && scripts.try_emplace(path).second;
+    }
+
+    bool Remove(const std::string& path) { return scripts.erase(path) != 0; }
 };
 
 class ScriptSystem
 {
 private:
+    // One running script = one entity + one script path.
+    using ScriptKey = std::pair<entt::entity, std::string>;
+
     struct RuntimeScript
     {
         std::string loadedPath;
@@ -165,7 +184,9 @@ public:
     //   GetComponent("Transform")
     //   self:expose("speed", 5.0)
     //   expose("speed", 5.0)
-    sol::table CreateSelf(entt::entity entity)
+    // `path` is the script this table belongs to: its exposed fields are kept
+    // under that path in the entity's ScriptComponent.
+    sol::table CreateSelf(entt::entity entity, const std::string& path)
     {
         sol::table self = lua_.create_table();
 
@@ -187,18 +208,18 @@ public:
         self.set_function(
             "expose",
             sol::overload(
-                [this, entity](
+                [this, entity, path](
                     sol::table,
                     const std::string& name,
                     sol::object value) -> sol::object
                 {
-                    return ExposeFor(entity, name, value);
+                    return ExposeFor(entity, path, name, value);
                 },
-                [this, entity](
+                [this, entity, path](
                     const std::string& name,
                     sol::object value) -> sol::object
                 {
-                    return ExposeFor(entity, name, value);
+                    return ExposeFor(entity, path, name, value);
                 }));
 
         // self:GetEntity() -> EntityRef to this script's own entity.
@@ -213,10 +234,10 @@ public:
 
         meta.set_function(
             "__index",
-            [this, entity](sol::table, sol::object key) -> sol::object
+            [this, entity, path](sol::table, sol::object key) -> sol::object
             {
                 if (key.is<std::string>())
-                    if (auto exposed = ReadExposed(entity, key.as<std::string>()))
+                    if (auto exposed = ReadExposed(entity, path, key.as<std::string>()))
                         return *exposed;
 
                 return sol::make_object(lua_, sol::lua_nil);
@@ -224,10 +245,10 @@ public:
 
         meta.set_function(
             "__newindex",
-            [this, entity](sol::table tbl, sol::object key, sol::object value)
+            [this, entity, path](sol::table tbl, sol::object key, sol::object value)
             {
                 if (key.is<std::string>() &&
-                    WriteExposed(entity, key.as<std::string>(), value))
+                    WriteExposed(entity, path, key.as<std::string>(), value))
                     return;
 
                 tbl.raw_set(key, value);
@@ -255,7 +276,10 @@ public:
     //           Update = Update
     //       }
     //   end
-    bool LoadScript(entt::entity entity)
+    //
+    // An entity can carry several scripts (ScriptComponent::scripts); this
+    // loads the one stored under `path`.
+    bool LoadScript(entt::entity entity, const std::string& path)
     {
         if (!registry_.valid(entity) ||
             !registry_.all_of<ScriptComponent>(entity))
@@ -268,20 +292,29 @@ public:
         ScriptComponent& component =
             registry_.get<ScriptComponent>(entity);
 
-        if (component.path.empty())
+        if (path.empty())
         {
             std::cerr
                 << "LoadScript(): script path is empty\n";
             return false;
         }
 
+        if (!component.Has(path))
+        {
+            std::cerr
+                << "LoadScript(): entity has no script '"
+                << path
+                << "'\n";
+            return false;
+        }
+
         RuntimeScript runtime;
-        runtime.loadedPath = component.path;
+        runtime.loadedPath = path;
 
         // Each entity gets its own Lua environment.
         runtime.environment = sol::environment(lua_, sol::create);
 
-        runtime.self = CreateSelf(entity);
+        runtime.self = CreateSelf(entity, path);
 
         // Expose the entity API inside the script environment.
         runtime.environment["self"] = runtime.self;
@@ -290,15 +323,16 @@ public:
             runtime.self["GetComponent"];
 
         // Exposed fields become live members of the script: the bare name
-        // (speed) reads and writes ScriptComponent::fields directly.
-        InstallEnvironmentMeta(runtime.environment, entity);
+        // (speed) reads and writes this script's entry in
+        // ScriptComponent::scripts directly.
+        InstallEnvironmentMeta(runtime.environment, entity, path);
 
         // Execute the chunk. The chunk must return a factory function.
         // script_pass_on_error: a missing file or a syntax error comes back as
         // an invalid result (handled below) instead of throwing.
         sol::protected_function_result chunkResult =
             lua_.safe_script_file(
-                component.path,
+                path,
                 runtime.environment,
                 sol::script_pass_on_error);
 
@@ -308,7 +342,7 @@ public:
 
             std::cerr
                 << "Loading script '"
-                << component.path
+                << path
                 << "' failed: "
                 << err.what()
                 << '\n';
@@ -323,7 +357,7 @@ public:
         {
             std::cerr
                 << "Script '"
-                << component.path
+                << path
                 << "' must return a factory function\n";
             return false;
         }
@@ -357,7 +391,7 @@ public:
         {
             std::cerr
                 << "Factory in '"
-                << component.path
+                << path
                 << "' must return a table\n";
             return false;
         }
@@ -382,22 +416,23 @@ public:
         }
 
         // Replace the current runtime only after the new script loads.
-        scripts_[entity] = std::move(runtime);
+        scripts_[ScriptKey{entity, path}] = std::move(runtime);
 
         return true;
     }
 
     // Invoke Start() once for this runtime.
-    bool StartScript(entt::entity entity)
+    bool StartScript(entt::entity entity, const std::string& path)
     {
-        auto it = scripts_.find(entity);
+        const ScriptKey key{entity, path};
+        auto it = scripts_.find(key);
 
         if (it == scripts_.end())
         {
-            if (!LoadScript(entity))
+            if (!LoadScript(entity, path))
                 return false;
 
-            it = scripts_.find(entity);
+            it = scripts_.find(key);
 
             if (it == scripts_.end())
                 return false;
@@ -423,9 +458,11 @@ public:
             sol::error err = result;
 
             std::cerr
-                << "Start() failed for entity "
+                << "Start() failed in '"
+                << path
+                << "' (entity "
                 << static_cast<std::uint32_t>(entity)
-                << ": "
+                << "): "
                 << err.what()
                 << '\n';
 
@@ -435,39 +472,32 @@ public:
         return true;
     }
 
-    // Load and start scripts as necessary, then invoke Update(dt).
+    // Load and start scripts as necessary, then invoke Update(dt) on every
+    // script of every entity.
     void UpdateScripts(float dt)
     {
-        // Copy entity IDs first so script callbacks can modify the registry
-        // without invalidating the view iteration.
-        std::vector<entt::entity> entities;
+        // Copy the keys first so script callbacks can modify the registry
+        // (or add and remove scripts) without invalidating the iteration.
+        const std::vector<ScriptKey> keys = CollectScriptKeys();
 
-        auto view = registry_.view<ScriptComponent>();
-
-        for (entt::entity entity : view)
-            entities.push_back(entity);
-
-        for (entt::entity entity : entities)
+        for (const ScriptKey& key : keys)
         {
-            if (!registry_.valid(entity) ||
-                !registry_.all_of<ScriptComponent>(entity))
-            {
+            const entt::entity entity = key.first;
+            const std::string& path = key.second;
+
+            // An earlier script this frame may have removed it.
+            if (!ScriptExists(key))
                 continue;
-            }
 
-            const std::string path =
-                registry_.get<ScriptComponent>(entity).path;
+            auto it = scripts_.find(key);
 
-            auto it = scripts_.find(entity);
-
-            // Load if missing, or reload if the path changed.
-            if (it == scripts_.end() ||
-                it->second.loadedPath != path)
+            // Load if it has no runtime yet.
+            if (it == scripts_.end())
             {
                 if (!TryLoad(entity, path))
                     continue;
 
-                it = scripts_.find(entity);
+                it = scripts_.find(key);
 
                 if (it == scripts_.end())
                     continue;
@@ -475,10 +505,10 @@ public:
 
             // StartScript is safe to call repeatedly.
             if (!it->second.started)
-                StartScript(entity);
+                StartScript(entity, path);
 
             // Re-find the runtime after invoking Lua.
-            it = scripts_.find(entity);
+            it = scripts_.find(key);
 
             if (it == scripts_.end())
                 continue;
@@ -499,9 +529,11 @@ public:
                 sol::error err = result;
 
                 std::cerr
-                    << "Update() failed for entity "
+                    << "Update() failed in '"
+                    << path
+                    << "' (entity "
                     << static_cast<std::uint32_t>(entity)
-                    << ": "
+                    << "): "
                     << err.what()
                     << '\n';
 
@@ -516,37 +548,26 @@ public:
     // Edit mode: run every script's factory (so expose() registers its
     // fields for the Inspector) without calling Start() or Update().
     // Cheap to call every frame: it only loads scripts that have no runtime
-    // yet or whose path changed, and a script that failed to load is not
-    // retried until its path changes or ReloadAll() is called.
+    // yet, and a script that failed to load is not retried until ReloadAll()
+    // is called (or it is removed and added again).
     void EnsureLoaded()
     {
-        std::vector<entt::entity> entities;
+        const std::vector<ScriptKey> keys = CollectScriptKeys();
 
-        for (entt::entity entity : registry_.view<ScriptComponent>())
-            entities.push_back(entity);
-
-        for (entt::entity entity : entities)
+        for (const ScriptKey& key : keys)
         {
-            if (!registry_.valid(entity) ||
-                !registry_.all_of<ScriptComponent>(entity))
-            {
+            if (!ScriptExists(key))
                 continue;
-            }
 
-            const std::string path =
-                registry_.get<ScriptComponent>(entity).path;
-
-            auto it = scripts_.find(entity);
-
-            if (it == scripts_.end() || it->second.loadedPath != path)
-                TryLoad(entity, path);
+            if (scripts_.find(key) == scripts_.end())
+                TryLoad(key.first, key.second);
         }
 
         RemoveStaleRuntimes();
     }
 
     // Throw away every runtime and load them all again, fresh and not yet
-    // started. Exposed field values stored in ScriptComponent::fields are
+    // started. Exposed field values stored in ScriptComponent::scripts are
     // kept (expose() only supplies defaults). Re-reads the files from disk.
     // Call it when switching between Edit and Play.
     void ReloadAll()
@@ -556,10 +577,18 @@ public:
         EnsureLoaded();
     }
 
+    // Drop every runtime that belongs to `entity`.
     void UnloadScript(entt::entity entity)
     {
-        scripts_.erase(entity);
-        failed_.erase(entity);
+        EraseEntity(scripts_, entity);
+        EraseEntity(failed_, entity);
+    }
+
+    // Drop one script's runtime.
+    void UnloadScript(entt::entity entity, const std::string& path)
+    {
+        scripts_.erase(ScriptKey{entity, path});
+        failed_.erase(ScriptKey{entity, path});
     }
 
     void UnloadAll()
@@ -576,20 +605,65 @@ public:
     }
 
 private:
+    // Every (entity, script path) pair currently in the registry.
+    std::vector<ScriptKey> CollectScriptKeys()
+    {
+        std::vector<ScriptKey> keys;
+
+        for (entt::entity entity : registry_.view<ScriptComponent>())
+            for (const auto& entry : registry_.get<ScriptComponent>(entity).scripts)
+                keys.emplace_back(entity, entry.first);
+
+        return keys;
+    }
+
+    // True while the entity is alive and still has this script attached.
+    bool ScriptExists(const ScriptKey& key)
+    {
+        if (!registry_.valid(key.first))
+            return false;
+
+        const auto* sc = registry_.try_get<ScriptComponent>(key.first);
+
+        return sc && sc->Has(key.second);
+    }
+
+    static void EraseEntity(std::map<ScriptKey, RuntimeScript>& container, entt::entity entity)
+    {
+        for (auto it = container.begin(); it != container.end();)
+        {
+            if (it->first.first == entity)
+                it = container.erase(it);
+            else
+                ++it;
+        }
+    }
+
+    static void EraseEntity(std::set<ScriptKey>& container, entt::entity entity)
+    {
+        for (auto it = container.begin(); it != container.end();)
+        {
+            if (it->first == entity)
+                it = container.erase(it);
+            else
+                ++it;
+        }
+    }
+
     // LoadScript with a memory of failures, so a broken script prints its
     // error once instead of every frame.
     bool TryLoad(entt::entity entity, const std::string& path)
     {
-        auto bad = failed_.find(entity);
+        const ScriptKey key{entity, path};
 
-        if (bad != failed_.end() && bad->second == path)
+        if (failed_.count(key))
             return false;
 
         bool ok = false;
 
         try
         {
-            ok = LoadScript(entity);
+            ok = LoadScript(entity, path);
         }
         catch (const std::exception& e)
         {
@@ -599,21 +673,21 @@ private:
 
         if (ok)
         {
-            failed_.erase(entity);
+            failed_.erase(key);
             return true;
         }
 
-        failed_[entity] = path;
+        failed_.insert(key);
         return false;
     }
 
-    // Remove runtimes for deleted entities or removed script components.
+    // Remove runtimes for deleted entities, removed script components, or
+    // scripts that were detached from their entity.
     void RemoveStaleRuntimes()
     {
         for (auto it = scripts_.begin(); it != scripts_.end();)
         {
-            if (!registry_.valid(it->first) ||
-                !registry_.all_of<ScriptComponent>(it->first))
+            if (!ScriptExists(it->first))
                 it = scripts_.erase(it);
             else
                 ++it;
@@ -621,8 +695,7 @@ private:
 
         for (auto it = failed_.begin(); it != failed_.end();)
         {
-            if (!registry_.valid(it->first) ||
-                !registry_.all_of<ScriptComponent>(it->first))
+            if (!ScriptExists(*it))
                 it = failed_.erase(it);
             else
                 ++it;
@@ -664,45 +737,68 @@ private:
 
     // ---- Exposed fields --------------------------------------------------
     //
-    // Exposed fields live only in ScriptComponent::fields. Scripts reach them
-    // through the environment (bare name) or self.<name>; neither keeps its own
-    // copy, so Inspector edits are seen immediately and script writes show up
-    // in the Inspector. Vectors/colors are returned as live proxies, so even
+    // Exposed fields live only in ScriptComponent::scripts[path]. Scripts reach
+    // them through the environment (bare name) or self.<n>; neither keeps its
+    // own copy, so Inspector edits are seen immediately and script writes show
+    // up in the Inspector. Vectors/colors are returned as live proxies, so even
     // `local offset = offset_field` stays live. A local copy of a plain
     // number/bool/string is still just a copy, exactly like in Unity.
+    //
+    // Every script on an entity has its own field table, so two scripts can
+    // both expose "speed" without touching each other.
+
+    // The exposed-field table of one script, or nullptr if the entity, its
+    // ScriptComponent or that script no longer exists.
+    std::map<std::string, Value>* FieldsFor(
+        entt::entity entity,
+        const std::string& path)
+    {
+        if (!registry_.valid(entity))
+            return nullptr;
+
+        auto* sc = registry_.try_get<ScriptComponent>(entity);
+
+        if (!sc)
+            return nullptr;
+
+        auto it = sc->scripts.find(path);
+
+        return it == sc->scripts.end() ? nullptr : &it->second;
+    }
 
     template <class T>
-    sol::object ExposedProxy(entt::entity entity, const std::string& name)
+    sol::object ExposedProxy(
+        entt::entity entity,
+        const std::string& path,
+        const std::string& name)
     {
-        auto get = [this, entity, name]() -> T
+        auto get = [this, entity, path, name]() -> T
         {
-            if (registry_.valid(entity))
-                if (auto* sc = registry_.try_get<ScriptComponent>(entity))
-                {
-                    auto it = sc->fields.find(name);
+            if (auto* fields = FieldsFor(entity, path))
+            {
+                auto it = fields->find(name);
 
-                    if (it != sc->fields.end())
-                        if (auto* v = std::get_if<T>(&it->second))
-                            return *v;
-                }
+                if (it != fields->end())
+                    if (auto* v = std::get_if<T>(&it->second))
+                        return *v;
+            }
 
             throw std::runtime_error(
                 "Exposed field no longer exists: " + name);
         };
 
-        auto set = [this, entity, name](const T& value)
+        auto set = [this, entity, path, name](const T& value)
         {
-            if (registry_.valid(entity))
-                if (auto* sc = registry_.try_get<ScriptComponent>(entity))
-                {
-                    auto it = sc->fields.find(name);
+            if (auto* fields = FieldsFor(entity, path))
+            {
+                auto it = fields->find(name);
 
-                    if (it != sc->fields.end())
-                    {
-                        it->second = value;
-                        return;
-                    }
+                if (it != fields->end())
+                {
+                    it->second = value;
+                    return;
                 }
+            }
 
             throw std::runtime_error(
                 "Exposed field no longer exists: " + name);
@@ -715,26 +811,25 @@ private:
 
     sol::optional<sol::object> ReadExposed(
         entt::entity entity,
+        const std::string& path,
         const std::string& name)
     {
-        ScriptComponent* sc = registry_.valid(entity)
-            ? registry_.try_get<ScriptComponent>(entity)
-            : nullptr;
+        auto* fields = FieldsFor(entity, path);
 
-        if (!sc)
+        if (!fields)
             return sol::nullopt;
 
-        auto it = sc->fields.find(name);
+        auto it = fields->find(name);
 
-        if (it == sc->fields.end())
+        if (it == fields->end())
             return sol::nullopt;
 
         const Value& v = it->second;
 
-        if (std::holds_alternative<Vector2>(v)) return ExposedProxy<Vector2>(entity, name);
-        if (std::holds_alternative<Vector3>(v)) return ExposedProxy<Vector3>(entity, name);
-        if (std::holds_alternative<Vector4>(v)) return ExposedProxy<Vector4>(entity, name);
-        if (std::holds_alternative<Color>(v))   return ExposedProxy<Color>(entity, name);
+        if (std::holds_alternative<Vector2>(v)) return ExposedProxy<Vector2>(entity, path, name);
+        if (std::holds_alternative<Vector3>(v)) return ExposedProxy<Vector3>(entity, path, name);
+        if (std::holds_alternative<Vector4>(v)) return ExposedProxy<Vector4>(entity, path, name);
+        if (std::holds_alternative<Color>(v))   return ExposedProxy<Color>(entity, path, name);
 
         return ValueToLua(lua_, v);
     }
@@ -743,19 +838,18 @@ private:
     // ordinary script variable). Throws a Lua error on a type mismatch.
     bool WriteExposed(
         entt::entity entity,
+        const std::string& path,
         const std::string& name,
         const sol::object& value)
     {
-        ScriptComponent* sc = registry_.valid(entity)
-            ? registry_.try_get<ScriptComponent>(entity)
-            : nullptr;
+        auto* fields = FieldsFor(entity, path);
 
-        if (!sc)
+        if (!fields)
             return false;
 
-        auto it = sc->fields.find(name);
+        auto it = fields->find(name);
 
-        if (it == sc->fields.end())
+        if (it == fields->end())
             return false;
 
         try
@@ -776,17 +870,20 @@ private:
     //   1. exposed fields (live)  2. the script's own variables  3. real globals
     // Assignments to an exposed name write the field; anything else is stored
     // in a per-script table, so scripts can still make their own "globals".
-    void InstallEnvironmentMeta(sol::environment& env, entt::entity entity)
+    void InstallEnvironmentMeta(
+        sol::environment& env,
+        entt::entity entity,
+        const std::string& path)
     {
         sol::table vars = lua_.create_table();
         sol::table meta = lua_.create_table();
 
         meta.set_function(
             "__index",
-            [this, entity, vars](sol::table, sol::object key) -> sol::object
+            [this, entity, path, vars](sol::table, sol::object key) -> sol::object
             {
                 if (key.is<std::string>())
-                    if (auto exposed = ReadExposed(entity, key.as<std::string>()))
+                    if (auto exposed = ReadExposed(entity, path, key.as<std::string>()))
                         return *exposed;
 
                 sol::table own = vars;
@@ -800,10 +897,10 @@ private:
 
         meta.set_function(
             "__newindex",
-            [this, entity, vars](sol::table, sol::object key, sol::object value)
+            [this, entity, path, vars](sol::table, sol::object key, sol::object value)
             {
                 if (key.is<std::string>() &&
-                    WriteExposed(entity, key.as<std::string>(), value))
+                    WriteExposed(entity, path, key.as<std::string>(), value))
                     return;
 
                 sol::table own = vars;
@@ -818,24 +915,23 @@ private:
     // loaded scene) wins, unless its type no longer matches.
     sol::object ExposeFor(
         entt::entity entity,
+        const std::string& path,
         const std::string& name,
         sol::object value)
     {
         try
         {
-            if (!registry_.valid(entity) ||
-                !registry_.all_of<ScriptComponent>(entity))
+            auto* fields = FieldsFor(entity, path);
+
+            if (!fields)
             {
                 throw std::runtime_error(
-                    "Entity no longer has a ScriptComponent");
+                    "Entity no longer has this script");
             }
-
-            ScriptComponent& script =
-                registry_.get<ScriptComponent>(entity);
 
             Value incoming = LuaToValue(value);
 
-            auto [it, inserted] = script.fields.try_emplace(name, incoming);
+            auto [it, inserted] = fields->try_emplace(name, incoming);
             bool changed = inserted;
 
             if (!inserted && it->second.index() != incoming.index())
@@ -847,7 +943,7 @@ private:
             if (changed && onFieldsChanged_)
                 onFieldsChanged_();
 
-            if (auto live = ReadExposed(entity, name))
+            if (auto live = ReadExposed(entity, path, name))
                 return *live;
         }
         catch (const std::exception& e)
@@ -857,6 +953,8 @@ private:
                 << e.what()
                 << " for field '"
                 << name
+                << "' in '"
+                << path
                 << "'\n";
         }
 
@@ -869,8 +967,9 @@ private:
     EntityBus& bus_;
     std::function<void()> onFieldsChanged_;
 
-    std::map<entt::entity, RuntimeScript> scripts_;
+    // (entity, script path) -> running script
+    std::map<ScriptKey, RuntimeScript> scripts_;
 
-    // entity -> script path that failed to load (see TryLoad)
-    std::map<entt::entity, std::string> failed_;
+    // (entity, script path) pairs that failed to load (see TryLoad)
+    std::set<ScriptKey> failed_;
 };

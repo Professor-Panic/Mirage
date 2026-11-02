@@ -1,6 +1,7 @@
 #include "raylib.h"
 #include "rui.h"
 #include "entt/entt.hpp"
+#include <raymath.h>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -14,7 +15,10 @@
 #include "mirage_editor/player_process.h"
 #include "mirage_core/line_socket.h"
 #include "mirage_editor/file_dialog.h"
+#include "mirage_editor/editor_menus.h"
 #include "mirage_core/runtime.h"
+#include "mirage_core/asset_manager.h"
+#include "mirage_core/sprite_renderer.h"
 // One row per entity that has a GameComponent.
 struct Row
 {
@@ -33,6 +37,11 @@ int main()
 
     InitWindow(1200, 800, "Scriptable Objects");
     SetTargetFPS(60);
+    //Camera stuff
+    Camera2D edit_cam;
+    edit_cam.target=Vector2Zero();
+    RenderTexture2D render_tex=LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+    //I'll set one unit to be 64 pixels  currently 
     rui::Context ui;
 
     // Keep the Lua state alive for the entire ScriptSystem lifetime.
@@ -110,11 +119,44 @@ int main()
         fileMenuOpen = fileMenuOpen == 1 ? 0 : 1;
         ui.RequestRebuild();
     });
-
+    ui.runtime.Function("deleteEntity",[&](){
+        core.entityBus.Destroy(core.entityBus.FindByName(core.entityBus.NameOf(selected)));
+        ui.RequestRebuild();
+    });
     Inspector inspector(ui, core.registry, core.reflection, selected, core.entityBus);
     inspector.Watch<TransformComponent>();
     inspector.Watch<GameComponent>();
     inspector.Watch<ScriptComponent>();
+    inspector.Watch<SpriteComponent>();
+
+    // ---------------------------------------------------------
+    // Right-click menus and the Add Component dropdown
+    // ---------------------------------------------------------
+    EditorMenus menus(ui, core.registry, core.reflection, core.entityBus, selected);
+
+    // A modal file dialog is open: don't pop menus over it.
+    menus.SetBlockedCheck([&]() { return fileDialog.IsOpen(); });
+    menus.OnMessage([&](const std::string& message) { core.scriptLog.Add(message); });
+
+    // "Add Component > Script" asks which .lua file to attach. Choosing another
+    // file adds another script to the same entity.
+    menus.OnAddScript([&](entt::entity target)
+    {
+        fileDialog.Open(".lua", "scripts", [&, target](const std::string& path)
+        {
+            if (!core.registry.valid(target)) return;
+
+            if (!core.registry.get_or_emplace<ScriptComponent>(target).Add(path))
+            {
+                core.scriptLog.Add("[editor] " + path + " is already attached");
+                return;
+            }
+
+            // Adding a script to an existing component fires no entt signal.
+            ui.runtime.Invalidate("Entity_Components");
+            ui.runtime.Invalidate("Entity_Fields");
+        }, "Add Script");
+    });
 
     // ---------------------------------------------------------
     // Game component list
@@ -127,6 +169,7 @@ int main()
     );
 
     ui.runtime.Bind("console_text",consoleText);
+    ui.runtime.Bind("inspector_texture",render_tex.texture);
     ui.runtime.Function("refreshUI", [&]()
     {
         ui.runtime.Invalidate("GameComponents");
@@ -275,7 +318,8 @@ int main()
 
     // The markup was mounted before all bindings were registered.
     ui.RequestRebuild();
-
+    AssetManager assetManager;
+    SpriteRenderer spriteRenderer=SpriteRenderer(assetManager);
     // ---------------------------------------------------------
     // Main loop
     // ---------------------------------------------------------
@@ -344,29 +388,23 @@ int main()
         // Refresh inspector data after scripts have run.
         inspector.Update();
         fileDialog.Update();
+        menus.Update();
 
         ui.Update({
             static_cast<float>(GetScreenWidth()),
             static_cast<float>(GetScreenHeight())
         });
+        BeginTextureMode(render_tex);
+        ClearBackground(BLACK);
+        spriteRenderer.Draw(core.registry);
+        EndTextureMode();
         BeginDrawing();
         ClearBackground(BLACK);
-
         ui.Draw();
 
         EndDrawing();
     }
     player.Stop();
-
-    // Autosave only scenes that already have a path. A new scene that was
-    // never saved should not silently overwrite the starter scene on exit.
-    // (The editor's scene is never changed by Play, so this is always safe.)
-    if (!scenePath.empty())
-    {
-        std::string err;
-        if (!Mirage::SaveSceneFile(core, scenePath, &err))
-            TraceLog(LOG_ERROR, "Save failed: %s", err.c_str());
-    }
     // Release Lua script runtimes before the Lua state is destroyed.
     core.scriptSystem.UnloadAll();
 

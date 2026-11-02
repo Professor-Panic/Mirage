@@ -3,7 +3,7 @@
 #include "rui.h"
 #include "entt/entt.hpp"
 #include "mirage_core/reflection.h"
-#include "mirage_core/script_system.h"   // ScriptComponent::fields
+#include "mirage_core/script_system.h"   // ScriptComponent::scripts
 #include <memory>
 #include <optional>
 #include <string>
@@ -59,13 +59,15 @@ struct CompRow {
 struct FieldRow {
     entt::entity entity;            // captured at build time, not read from `selected`
     std::string component;
-    std::string label;              // exposed rows: also the key in ScriptComponent::fields
+    std::string label;              // exposed rows: also the key in ScriptComponent::scripts[scriptPath]
     const ComponentInfo* comp;
-    const FieldInfo* field;         // nullptr for exposed script fields
-    bool first;
-    bool exposed = false;           // true: backed by ScriptComponent::fields
+    const FieldInfo* field;         // nullptr for exposed script fields and script headers
+    bool first;                     // first row of its component: the markup prints the component name
+    bool exposed = false;           // true: backed by ScriptComponent::scripts[scriptPath]
     FieldType exposedType = FieldType::Float;
     bool isRef = false;             // EntityRef row: lets the markup use the picker
+    std::string scriptPath;         // script rows: which script this row belongs to
+    bool isScript = false;          // header row of one script (label = its path, has a remove button)
 };
 
 inline FieldType TypeOfValue(const Value& v) {
@@ -174,14 +176,35 @@ public:
                                 first = false;
                             }
 
+                            // Script component: one header per script, followed by
+                            // that script's own exposed fields.
                             if (info->name == "Script")
-                                if (auto* sc = registry.try_get<ScriptComponent>(selected))
-                                    for (auto& [key, value] : sc->fields) {
-                                        const FieldType t = TypeOfValue(value);
-                                        rows.push_back({selected, info->name, key, info, nullptr, first,
-                                                        true, t, t == FieldType::EntityRef});
+                                if (auto* sc = registry.try_get<ScriptComponent>(selected)) {
+                                    if (sc->scripts.empty()) {
+                                        FieldRow none{selected, info->name, "(no scripts)", info, nullptr,
+                                                      first, false, FieldType::String, false};
+                                        none.isScript = true;       // empty path: its remove button does nothing
+                                        rows.push_back(none);
                                         first = false;
                                     }
+
+                                    for (auto& [path, fields] : sc->scripts) {
+                                        FieldRow header{selected, info->name, path, info, nullptr,
+                                                        first, false, FieldType::String, false};
+                                        header.scriptPath = path;
+                                        header.isScript = true;
+                                        rows.push_back(header);
+                                        first = false;
+
+                                        for (auto& [key, value] : fields) {
+                                            const FieldType t = TypeOfValue(value);
+                                            FieldRow row{selected, info->name, key, info, nullptr,
+                                                         false, true, t, t == FieldType::EntityRef};
+                                            row.scriptPath = path;
+                                            rows.push_back(row);
+                                        }
+                                    }
+                                }
                         }
 
                     return rows;
@@ -191,18 +214,19 @@ public:
                     .Field("first",     &FieldRow::first)
                     .Field("isRef",     &FieldRow::isRef)
                     .Field("exposed",   &FieldRow::exposed)
+                    .Field("isScript",  &FieldRow::isScript)
                     .Field("label",     &FieldRow::label)
                     .template Property<UIXValue>("value",
 
                         // getter: read the live component every time
                         [&](FieldRow& r) {
                             if (r.exposed) {
-                                auto* sc = registry.valid(r.entity)
-                                    ? registry.try_get<ScriptComponent>(r.entity) : nullptr;
-                                if (!sc) return UIXValue();
-                                auto it = sc->fields.find(r.label);
-                                return it == sc->fields.end() ? UIXValue() : ToUI(it->second);
+                                auto* fields = ExposedFields(r);
+                                if (!fields) return UIXValue();
+                                auto it = fields->find(r.label);
+                                return it == fields->end() ? UIXValue() : ToUI(it->second);
                             }
+                            if (!r.field) return UIXValue();          // script header rows have no value
                             void* c = registry.valid(r.entity)
                                 ? r.comp->find(registry, r.entity) : nullptr;
                             return c ? ToUI(r.field->get(c)) : UIXValue();
@@ -211,15 +235,15 @@ public:
                         // setter: write the edited value back
                         [&](FieldRow& r, UIXValue v) {
                             if (r.exposed) {
-                                auto* sc = registry.valid(r.entity)
-                                    ? registry.try_get<ScriptComponent>(r.entity) : nullptr;
+                                auto* fields = ExposedFields(r);
                                 Value out;
-                                if (sc && FromUI(r.exposedType, v, out)) {
-                                    auto it = sc->fields.find(r.label);
-                                    if (it != sc->fields.end()) it->second = out;
+                                if (fields && FromUI(r.exposedType, v, out)) {
+                                    auto it = fields->find(r.label);
+                                    if (it != fields->end()) it->second = out;
                                 }
                                 return;
                             }
+                            if (!r.field) return;
                             void* c = registry.valid(r.entity)
                                 ? r.comp->find(registry, r.entity) : nullptr;
                             Value out;
@@ -243,6 +267,19 @@ public:
                         },
                         [](FieldRow&, std::string) {});
             });
+
+        // The "x" on a script header: detach that script from the entity.
+        ui_.runtime.ItemFunction<FieldRow>("removeScript", [this](FieldRow& r) {
+            if (!registry_.valid(r.entity) || r.scriptPath.empty()) return;
+
+            if (auto* sc = registry_.try_get<ScriptComponent>(r.entity))
+                sc->Remove(r.scriptPath);   // ScriptSystem drops the runtime on its next pass
+
+            // Removing a script does not add or remove a component, so no entt
+            // signal fires; refresh the lists by hand.
+            ui_.runtime.Invalidate("Entity_Components");
+            ui_.runtime.Invalidate("Entity_Fields");
+        });
     }
 
     // Refresh both lists when component C is added to or removed from any entity.
@@ -262,16 +299,26 @@ public:
     }
 
 private:
+    // The exposed-field table of the script a row belongs to (nullptr if the
+    // entity or that script is gone).
+    std::map<std::string, Value>* ExposedFields(const FieldRow& r) {
+        if (!registry_.valid(r.entity)) return nullptr;
+        auto* sc = registry_.try_get<ScriptComponent>(r.entity);
+        if (!sc) return nullptr;
+        auto it = sc->scripts.find(r.scriptPath);
+        return it == sc->scripts.end() ? nullptr : &it->second;
+    }
+
     // Current value of a row, whether it is a reflected field or an exposed
     // script field.
     std::optional<Value> LiveValue(const FieldRow& r) {
         if (!registry_.valid(r.entity)) return std::nullopt;
 
         if (r.exposed) {
-            auto* sc = registry_.try_get<ScriptComponent>(r.entity);
-            if (!sc) return std::nullopt;
-            auto it = sc->fields.find(r.label);
-            if (it == sc->fields.end()) return std::nullopt;
+            auto* fields = ExposedFields(r);
+            if (!fields) return std::nullopt;
+            auto it = fields->find(r.label);
+            if (it == fields->end()) return std::nullopt;
             return it->second;
         }
 

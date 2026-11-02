@@ -61,12 +61,48 @@ inline int ParseKey(const std::string& name) {
     return it == table.end() ? KEY_NULL : it->second;
 }
 
+// Mouse buttons: "left", "right", "middle", "side", "extra", "forward", "back",
+// optionally written MOUSE_BUTTON_LEFT / MOUSE_LEFT, in any case. A plain
+// number (0 = left, 1 = right, 2 = middle ...) is accepted too.
+// Returns -1 when the name is unknown.
+inline int ParseMouseButton(std::string name) {
+    for (char& c : name) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (char& c : name) if (c == ' ' || c == '-') c = '_';
+    if (name.rfind("MOUSE_BUTTON_", 0) == 0) name.erase(0, 13);
+    else if (name.rfind("MOUSE_", 0) == 0)   name.erase(0, 6);
+
+    if (name == "LEFT")    return MOUSE_BUTTON_LEFT;
+    if (name == "RIGHT")   return MOUSE_BUTTON_RIGHT;
+    if (name == "MIDDLE")  return MOUSE_BUTTON_MIDDLE;
+    if (name == "SIDE")    return MOUSE_BUTTON_SIDE;
+    if (name == "EXTRA")   return MOUSE_BUTTON_EXTRA;
+    if (name == "FORWARD") return MOUSE_BUTTON_FORWARD;
+    if (name == "BACK")    return MOUSE_BUTTON_BACK;
+    return -1;
+}
+
 } // namespace lua_input_detail
 
-// Creates a global `input` table:
-//   input.IsKeyDown("KEY_A")     -> true while the key is held
-//   input.IsKeyPressed("KEY_SPACE") -> true only on the frame it goes down
-// Unknown key names return false and are reported once to `log`.
+// Creates a global `input` table.
+//
+// Keyboard (key names are case-insensitive, KEY_ prefix optional):
+//   input.IsKeyDown("KEY_A")        -> true while the key is held
+//   input.IsKeyUp("KEY_A")          -> true while the key is NOT held
+//   input.IsKeyPressed("SPACE")     -> true only on the frame it goes down
+//   input.IsKeyReleased("SPACE")    -> true only on the frame it is let go
+//
+// Mouse (button: "left", "right", "middle", "side", "extra", "forward",
+// "back", MOUSE_BUTTON_LEFT, or the numbers 0, 1, 2 ...):
+//   input.IsMouseDown("left")       -> true while the button is held
+//   input.IsMouseUp("left")         -> true while the button is NOT held
+//   input.IsMousePressed("left")    -> true only on the frame it goes down
+//   input.IsMouseReleased("left")   -> true only on the frame it is let go
+//   input.GetMousePosition()        -> { x = ..., y = ... } in window pixels
+//   input.GetMouseX() / GetMouseY()
+//   input.GetMouseDelta()           -> { x = ..., y = ... } movement this frame
+//   input.GetMouseWheel()           -> scroll this frame (positive = away from you)
+//
+// Unknown key or button names return false and are reported once to `log`.
 inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
     sol::table input = lua.create_named_table("input");
 
@@ -82,13 +118,93 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
         return key;
     };
 
+    // A button may be given as a name or as a number. -1 = unknown.
+    auto resolveButton = [&log](const sol::object& value) -> int {
+        if (value.get_type() == sol::type::number) {
+            const int button = value.as<int>();
+            return (button >= 0 && button <= MOUSE_BUTTON_BACK) ? button : -1;
+        }
+
+        if (value.get_type() == sol::type::string) {
+            const std::string name = value.as<std::string>();
+            const int button = lua_input_detail::ParseMouseButton(name);
+            if (button < 0) {
+                static std::unordered_map<std::string, bool> reported;
+                if (!reported[name]) {
+                    reported[name] = true;
+                    log.Add("input: unknown mouse button '" + name + "'");
+                }
+            }
+            return button;
+        }
+
+        return -1;
+    };
+
+    // --- keyboard ----------------------------------------------------------
+
     input.set_function("IsKeyDown", [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
         return key != KEY_NULL && IsKeyDown(key);
+    });
+
+    input.set_function("IsKeyUp", [resolve](const std::string& name) -> bool {
+        const int key = resolve(name);
+        return key != KEY_NULL && IsKeyUp(key);
     });
 
     input.set_function("IsKeyPressed", [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
         return key != KEY_NULL && IsKeyPressed(key);
     });
+
+    input.set_function("IsKeyReleased", [resolve](const std::string& name) -> bool {
+        const int key = resolve(name);
+        return key != KEY_NULL && IsKeyReleased(key);
+    });
+
+    // --- mouse buttons -----------------------------------------------------
+
+    input.set_function("IsMouseDown", [resolveButton](sol::object button) -> bool {
+        const int b = resolveButton(button);
+        return b >= 0 && IsMouseButtonDown(b);
+    });
+
+    input.set_function("IsMouseUp", [resolveButton](sol::object button) -> bool {
+        const int b = resolveButton(button);
+        return b >= 0 && IsMouseButtonUp(b);
+    });
+
+    input.set_function("IsMousePressed", [resolveButton](sol::object button) -> bool {
+        const int b = resolveButton(button);
+        return b >= 0 && IsMouseButtonPressed(b);
+    });
+
+    input.set_function("IsMouseReleased", [resolveButton](sol::object button) -> bool {
+        const int b = resolveButton(button);
+        return b >= 0 && IsMouseButtonReleased(b);
+    });
+
+    // --- mouse position, movement and wheel --------------------------------
+
+    input.set_function("GetMousePosition", [&lua]() -> sol::table {
+        const Vector2 p = GetMousePosition();
+        sol::table t = lua.create_table();
+        t["x"] = p.x;
+        t["y"] = p.y;
+        return t;
+    });
+
+    input.set_function("GetMouseX", []() -> float { return static_cast<float>(GetMouseX()); });
+    input.set_function("GetMouseY", []() -> float { return static_cast<float>(GetMouseY()); });
+
+    input.set_function("GetMouseDelta", [&lua]() -> sol::table {
+        const Vector2 d = GetMouseDelta();
+        sol::table t = lua.create_table();
+        t["x"] = d.x;
+        t["y"] = d.y;
+        return t;
+    });
+
+    input.set_function("GetMouseWheel", []() -> float { return GetMouseWheelMove(); });
 }

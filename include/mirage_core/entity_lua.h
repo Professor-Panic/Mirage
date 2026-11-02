@@ -105,7 +105,7 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
         {
             void* from = info.find(registry, src);
             if (!from || !info.add)
-                continue;                                 // absent, or Script (below)
+                continue;                                 // absent, or has no default add
 
             info.add(registry, copy);
             void* to = info.find(registry, copy);
@@ -118,9 +118,12 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
 
         if (const auto* script = registry.try_get<ScriptComponent>(src))
         {
-            ScriptComponent duplicate(script->path);
-            duplicate.fields = script->fields;
-            registry.emplace<ScriptComponent>(copy, std::move(duplicate));
+            ScriptComponent duplicate;
+            duplicate.scripts = script->scripts;          // every script, with its field values
+            // The reflection loop above already added an (empty) ScriptComponent
+            // to the copy, so replace it: a plain emplace would hit EnTT's
+            // "Slot not available" assert.
+            registry.emplace_or_replace<ScriptComponent>(copy, std::move(duplicate));
         }
 
         return bus.Register(copy);
@@ -174,17 +177,46 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             return true;
         },
 
+        // Replaces every script on the entity with this one.
         "SetScript", [&bus, &registry](const EntityRef& r, const std::string& path)
         {
             entt::entity e = bus.Resolve(r);
             if (e == entt::null || path.empty())
                 return false;
 
-            if (auto* script = registry.try_get<ScriptComponent>(e))
-                script->path = path;                      // ScriptSystem reloads on change
-            else
-                registry.emplace<ScriptComponent>(e, path);
+            registry.emplace_or_replace<ScriptComponent>(e, path);
             return true;
+        },
+
+        // Attaches another script (false if it is already attached).
+        "AddScript", [&bus, &registry](const EntityRef& r, const std::string& path)
+        {
+            entt::entity e = bus.Resolve(r);
+            if (e == entt::null || path.empty())
+                return false;
+
+            return registry.get_or_emplace<ScriptComponent>(e).Add(path);
+        },
+
+        // Detaches one script (false if it was not attached).
+        "RemoveScript", [&bus, &registry](const EntityRef& r, const std::string& path)
+        {
+            entt::entity e = bus.Resolve(r);
+            if (e == entt::null)
+                return false;
+
+            auto* script = registry.try_get<ScriptComponent>(e);
+            return script && script->Remove(path);
+        },
+
+        "HasScript", [&bus, &registry](const EntityRef& r, const std::string& path)
+        {
+            entt::entity e = bus.Resolve(r);
+            if (e == entt::null)
+                return false;
+
+            const auto* script = registry.try_get<ScriptComponent>(e);
+            return script && script->Has(path);
         },
 
         "Clone", cloneEntity,

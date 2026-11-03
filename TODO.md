@@ -8,7 +8,7 @@
 
 | # | Description               | Flag | Deadline | Started    | Completed  |
 |---|---------------------------|------|----------|------------|------------|
-| 1 | Add Sprite Component      | 1    | —        | —          | —          |
-| 2 | Create an asset Manager   | 1    | —        | —          | —          |
+| 1 | Add Sprite Component      | 3    | —        | 2026-11-03 | 2026-11-03 |
+| 2 | Create an asset Manager   | 3    | —        | 2026-11-03 | 2026-11-03 |
 | 3 | Create a Lua Input System | 3    | —        | 2026-10-28 | 2026-10-28 |
 | 4 | Create a file manager     | 1    | —        | —          | —          |

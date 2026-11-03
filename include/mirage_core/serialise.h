@@ -199,8 +199,10 @@ inline json SaveScene(entt::registry& reg, const EntityBus& bus, const Reflectio
             if (!c) continue;
 
             json fields = json::object();
-            for (const FieldInfo& f : info.fields)
+            for (const FieldInfo& f : info.fields) {
+                if (f.transient) continue;          // derived (e.g. Transform.eulerAngles)
                 fields[f.name] = ValueToJson(f.get(c), bus);
+            }
             comps[name] = std::move(fields);       // tags save as {}
         }
         ent["components"] = std::move(comps);

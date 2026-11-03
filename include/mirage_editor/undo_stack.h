@@ -9,6 +9,7 @@ struct TransformSnapshot {
     Vector3    position;
     Vector3    scale;
     Quaternion rotation;
+    Vector3    euler;      // TransformComponent::eulerHint, so undo restores what the inspector showed
 };
 
 // One finished drag. Keyed by uuid, not entt::entity, so undo still works

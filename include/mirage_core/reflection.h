@@ -27,7 +27,9 @@ struct FieldInfo{
     std::function<Value(const void*)>   get;
     std::function<void(void*, Value)>   set;
     float min = 0, max = 0;
-    bool  hidden = false;
+    bool  hidden = false;           // not shown in the inspector
+    bool  transient = false;        // derived from other fields: never saved to a scene file
+    std::string label;              // inspector text; empty = use `name`
 };
 struct ComponentInfo{
     std::string name;
@@ -51,6 +53,27 @@ public:
             });
             return *this;
         }
+
+        // A computed field: not a member of C but a getter and setter pair, for
+        // values that are derived from the real data (e.g. Euler angles of a
+        // quaternion). `F` is the field's type:
+        //   .Property<Vector3>("eulerAngles",
+        //       [](const Transform& t) { return t.GetEulerAngles(); },
+        //       [](Transform& t, const Vector3& v) { t.SetEulerAngles(v); })
+        template<class F, class Get, class Set>
+        Builder& Property(std::string name, Get getter, Set setter) {
+            info.fields.push_back({
+                std::move(name), TypeOf<F>(),
+                [getter](const void* c) { return Value(F(getter(*static_cast<const C*>(c)))); },
+                [setter](void* c, Value v) { setter(*static_cast<C*>(c), std::get<F>(v)); }
+            });
+            return *this;
+        }
+
+        // Modifiers for the field added last:
+        Builder& Hidden()    { if (!info.fields.empty()) info.fields.back().hidden = true;    return *this; }
+        Builder& Transient() { if (!info.fields.empty()) info.fields.back().transient = true; return *this; }
+        Builder& Label(std::string text) { if (!info.fields.empty()) info.fields.back().label = std::move(text); return *this; }
 
         // Replaces info.add so it constructs C with these args instead of C().
         template<class... Args>

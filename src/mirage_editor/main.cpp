@@ -33,6 +33,7 @@ int main()
     EditorState state;
     ui.runtime.Bind("selected", state.selected);
     ui.runtime.Bind("mode", state.mode);
+    ui.runtime.Bind("tool", state.tool);      // W / E / R in ViewportTools; the markup may set it too
 
     core.scriptSystem.OnFieldsChanged([&] { ui.runtime.Invalidate("Entity_Fields"); });
 

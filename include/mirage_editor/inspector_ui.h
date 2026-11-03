@@ -171,7 +171,7 @@ public:
 
                             for (auto& f : info->fields) {
                                 if (f.hidden) continue;
-                                rows.push_back({selected, info->name, f.name, info, &f, first,
+                                rows.push_back({selected, info->name, f.label.empty() ? f.name : f.label, info, &f, first,
                                                 false, f.type, f.type == FieldType::EntityRef});
                                 first = false;
                             }

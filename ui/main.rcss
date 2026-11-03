@@ -87,6 +87,7 @@
     min-width: 0;              /* lets a flex child shrink below its content width */
     max-width: 100%;
     flex-shrink: 1;
+    flex-grow: 1;
     overflow: hidden;
 }
 /* Component heading ("Transform", "Game", "Script") */

@@ -10,4 +10,5 @@ struct EditorState
 {
     entt::entity selected = entt::null;   // bound to the UI as `selected`
     Mode         mode     = Mode::Edit;   // bound to the UI as `mode`
+    Tool         tool     = Tool::Move;   // bound to the UI as `tool`: 0 = Move, 1 = Rotate, 2 = Scale
 };

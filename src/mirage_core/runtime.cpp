@@ -18,7 +18,15 @@ MirageCoreRuntime::MirageCoreRuntime():
     reflection.Component<TransformComponent>("Transform")
         .Field("position", &TransformComponent::position)
         .Field("scale", &TransformComponent::scale)
-        .Field("rotation", &TransformComponent::rotation);
+        // The quaternion stays the stored (and saved) truth, but the inspector
+        // shows Euler angles in degrees. `eulerAngles` is computed from it, so it
+        // is never written to a scene file, and scripts can use either:
+        //   transform.eulerAngles.z = 45     transform.rotation (quaternion, as before)
+        .Field("rotation", &TransformComponent::rotation).Hidden()
+        .Property<Vector3>("eulerAngles",
+            [](const TransformComponent& t) { return t.GetEulerAngles(); },
+            [](TransformComponent& t, const Vector3& degrees) { t.SetEulerAngles(degrees); })
+        .Label("rotation").Transient();
 
     reflection.Component<GameComponent>("Game")
         .Field("name", &GameComponent::name)

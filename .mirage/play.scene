@@ -8,7 +8,7 @@
         "Sprite": {
           "flipX": false,
           "flipY": false,
-          "layer": 2,
+          "layer": 1,
           "path": "textures/Mechanic guy.png",
           "pivot": [
             0.5,
@@ -41,8 +41,8 @@
             1.0
           ],
           "scale": [
-            10.0,
-            10.0,
+            1.0,
+            1.0,
             1.0
           ]
         }
@@ -63,55 +63,6 @@
           "path": "scripts/test.lua"
         }
       ]
-    },
-    {
-      "components": {
-        "Game": {
-          "name": "Entity 2"
-        },
-        "Sprite": {
-          "flipX": false,
-          "flipY": false,
-          "layer": 1,
-          "path": "textures/folder.png",
-          "pivot": [
-            0.5,
-            0.5
-          ],
-          "source": [
-            0.0,
-            0.0,
-            0.0,
-            0.0
-          ],
-          "tint": [
-            255,
-            255,
-            255,
-            255
-          ],
-          "visible": true
-        },
-        "Transform": {
-          "position": [
-            10.0,
-            5.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            10.0,
-            10.0,
-            1.0
-          ]
-        }
-      },
-      "id": "a2e705e1-5833-4a8c-8585-90ef79d47968"
     }
   ],
   "version": 1

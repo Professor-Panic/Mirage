@@ -1,29 +1,29 @@
 #include "mirage_core/sprite_renderer.h"
 #include "mirage_core/components.h"
+#include "mirage_core/component_systems.h"   // GetSpriteBounds, HitSprite
 #include <algorithm>
 #include <cmath>
-
-void SpriteRenderer::Draw(entt::registry& registry,int gridX,int gridY)
+void SpriteRenderer::CollectSorted(entt::registry& registry)
 {
     auto view = registry.view<TransformComponent, SpriteComponent>();
-
-    // 1. Collect: only what the sort needs.
     items_.clear();
     for (auto [e, tf, sprite] : view.each())
     {
         if (!sprite.visible) continue;
         items_.push_back({ e, sprite.layer, tf.position.z });
     }
-
-    // 2. Sort by layer, then by z. Stable, so equal sprites don't flicker.
     std::stable_sort(items_.begin(), items_.end(),
         [](const DrawItem& a, const DrawItem& b)
         {
             if (a.layer != b.layer) return a.layer < b.layer;
             return a.z < b.z;
         });
+}
 
-    // 3. Draw in that order.
+void SpriteRenderer::Draw(entt::registry& registry,int gridX,int gridY)
+{
+    CollectSorted(registry);
+    auto view = registry.view<TransformComponent, SpriteComponent>();
     for (const DrawItem& item : items_)
     {
         const TransformComponent& tf     = view.get<TransformComponent>(item.entity);
@@ -56,4 +56,16 @@ void SpriteRenderer::Draw(entt::registry& registry,int gridX,int gridY)
 
         DrawTexturePro(tex, src, dest, origin, angle, sprite.tint);
     }
+}
+entt::entity SpriteRenderer::Pick(entt::registry& registry, Vector2 worldPx, int grid)
+{
+    CollectSorted(registry);
+    for (auto it = items_.rbegin(); it != items_.rend(); ++it)   // front to back
+    {
+        const auto& tf     = registry.get<TransformComponent>(it->entity);
+        const auto& sprite = registry.get<SpriteComponent>(it->entity);
+        if (HitSprite(GetSpriteBounds(tf, sprite, grid), worldPx))
+            return it->entity;
+    }
+    return entt::null;
 }

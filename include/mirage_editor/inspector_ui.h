@@ -70,7 +70,7 @@ struct FieldRow {
     bool isScript = false;          // header row of one script (label = its path, has a remove button)
 };
 
-inline FieldType TypeOfValue(const Value& v) {
+inline FieldType InspectorTypeOfValue(const Value& v) {
     return std::visit([](const auto& x) { return TypeOf<std::decay_t<decltype(x)>>(); }, v);
 }
 
@@ -197,7 +197,7 @@ public:
                                         first = false;
 
                                         for (auto& [key, value] : fields) {
-                                            const FieldType t = TypeOfValue(value);
+                                            const FieldType t = InspectorTypeOfValue(value);
                                             FieldRow row{selected, info->name, key, info, nullptr,
                                                          false, true, t, t == FieldType::EntityRef};
                                             row.scriptPath = path;

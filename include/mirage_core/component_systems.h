@@ -1,6 +1,7 @@
 #pragma once
-#include "components.h"
+#include <cmath>
 #include "raylib.h"
+#include "raymath.h"            // Vector2Rotate
 #include "entt/entt.hpp"
 #include "mirage_core/components.h"
 struct SpriteBounds {
@@ -43,4 +44,4 @@ inline void SpriteCorners(const SpriteBounds& b, Vector2 out[4])
         p = Vector2Rotate(p, b.angle * DEG2RAD);
         out[i] = { p.x + b.position.x, p.y + b.position.y };
     }
-}
+}

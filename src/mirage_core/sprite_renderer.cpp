@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-void SpriteRenderer::Draw(entt::registry& registry)
+void SpriteRenderer::Draw(entt::registry& registry,int gridX,int gridY)
 {
     auto view = registry.view<TransformComponent, SpriteComponent>();
 
@@ -37,17 +37,14 @@ void SpriteRenderer::Draw(entt::registry& registry)
         if (src.width <= 0.0f || src.height <= 0.0f)
             src = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
 
-        const float width  = src.width;     // size before the flip is applied
-        const float height = src.height;
-
         // A negative source width/height mirrors the image in raylib.
         if (sprite.flipX) src.width  = -src.width;
         if (sprite.flipY) src.height = -src.height;
-
-        // Destination: position in pixels, size = source size * scale.
-        const float destW = width  * tf.scale.x;
-        const float destH = height * tf.scale.y;
-        const Rectangle dest = { tf.position.x, tf.position.y, destW, destH };
+        // pixels). scale = the sprite's size in world units, so scale (1,1) is
+        // exactly one grid cell no matter how big the texture is.
+        const float destW = tf.scale.x * gridX;
+        const float destH = tf.scale.y * gridY;
+        const Rectangle dest = { tf.position.x*gridX, tf.position.y*gridY, destW, destH };
 
         // Pivot (0..1 of the size) is where the sprite rotates and sits on position.
         const Vector2 origin = { destW * sprite.pivot.x, destH * sprite.pivot.y };

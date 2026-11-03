@@ -1,2 +1,2 @@
-.hier-menu { left: 134px; top: 230px; width: 170px; height: 44px; }
-.add-menu { left: 0px; top: 0px; width: 240px; height: 300px; }
+.hier-menu { left: 0px; top: 0px; width: 170px; height: 44px; }
+.add-menu { left: 1360px; top: 221px; width: 240px; height: 300px; }

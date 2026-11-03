@@ -34,14 +34,10 @@ int main()
     // ---------------------------------------------------------
     // Initialize engine
     // ---------------------------------------------------------
-
-    InitWindow(1200, 800, "Scriptable Objects");
+    InitWindow(1600, 900, "Scriptable Objects");
     SetTargetFPS(60);
-    //Camera stuff
-    Camera2D edit_cam;
-    edit_cam.target=Vector2Zero();
-    RenderTexture2D render_tex=LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
-    //I'll set one unit to be 64 pixels  currently 
+    // One world unit is 64 pixels. Positions AND scales are in world units.
+    constexpr int kPixelsPerUnit = 64;
     rui::Context ui;
 
     // Keep the Lua state alive for the entire ScriptSystem lifetime.
@@ -169,7 +165,6 @@ int main()
     );
 
     ui.runtime.Bind("console_text",consoleText);
-    ui.runtime.Bind("inspector_texture",render_tex.texture);
     ui.runtime.Function("refreshUI", [&]()
     {
         ui.runtime.Invalidate("GameComponents");
@@ -320,6 +315,47 @@ int main()
     ui.RequestRebuild();
     AssetManager assetManager;
     SpriteRenderer spriteRenderer=SpriteRenderer(assetManager);
+
+    // ---------------------------------------------------------
+    // Scene viewport (the <viewport> in ui/main.rxml)
+    // ---------------------------------------------------------
+    // The viewport owns pan (middle mouse) and wheel zoom, and clips drawing to
+    // its panel. Its draw handlers run inside its transform, so everything
+    // drawn here is in world pixels (world units * kPixelsPerUnit).
+    //
+    // Markup: <viewport id="scene_view" minZoom="0.1" maxZoom="10"
+    //                   onUpdate="sceneViewUpdate"
+    //                   onBackgroundDraw="sceneViewDraw"/>
+    bool sceneViewCentered = false;
+    ui.runtime.Function("sceneViewUpdate", [&](const rui::Event& e)
+    {
+        auto* view = static_cast<rui::Viewport*>(e.native_widget);
+        if (!view) return;
+
+        // Show world (0,0) at the panel centre, like the old Camera2D did.
+        // Done once, as soon as layout has given the panel a real size.
+        // (A markup rebuild keeps the camera, so this does not repeat.)
+        if (!sceneViewCentered && view->rect.transform.width > 1.0f)
+        {
+            view->CenterOn({ 0.0f, 0.0f });
+            sceneViewCentered = true;
+        }
+
+        // Later: picking, hover and gizmo dragging go here, using
+        // view->world_mouse (world pixels), view->hovered and
+        // view->camera.zoom. Divide by kPixelsPerUnit for world units.
+    });
+    ui.runtime.Function("sceneViewDraw", [&](const rui::Event& e)
+    {
+        const auto* view = static_cast<const rui::Viewport*>(e.native_widget);
+        const float zoom = view ? view->camera.zoom : 1.0f;
+
+        // No ClearBackground here: that would wipe the whole window. The panel's
+        // background comes from the viewport's RCSS (background-color).
+        DrawRectangleLinesEx({0, 0, 1600, 900}, 2.0f / zoom, WHITE);
+        spriteRenderer.Draw(core.registry, kPixelsPerUnit, kPixelsPerUnit);
+    });
+
     // ---------------------------------------------------------
     // Main loop
     // ---------------------------------------------------------
@@ -378,10 +414,6 @@ int main()
 
             lastMode = mode;
         }
-
-        // The editor never runs Start()/Update(); that is the player's job.
-        // This runs each script's factory so expose() registers its fields
-        // for the Inspector.
         core.scriptSystem.EnsureLoaded();
         if (core.scriptLog.ConsumeDirty()) consoleText = core.scriptLog.Text();
 
@@ -394,10 +426,6 @@ int main()
             static_cast<float>(GetScreenWidth()),
             static_cast<float>(GetScreenHeight())
         });
-        BeginTextureMode(render_tex);
-        ClearBackground(BLACK);
-        spriteRenderer.Draw(core.registry);
-        EndTextureMode();
         BeginDrawing();
         ClearBackground(BLACK);
         ui.Draw();

@@ -7,7 +7,7 @@
 class SpriteRenderer {
 public:
     explicit SpriteRenderer(AssetManager& assets) : assets_(assets) {}
-    void Draw(entt::registry& registry);          // one call per frame, inside Begin/EndDrawing
+    void Draw(entt::registry& registry,int gridX,int gridY);          // one call per frame, inside Begin/EndDrawing
 
 private:
     struct DrawItem {

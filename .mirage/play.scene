@@ -8,7 +8,7 @@
         "Sprite": {
           "flipX": false,
           "flipY": false,
-          "layer": 1,
+          "layer": 2,
           "path": "textures/Mechanic guy.png",
           "pivot": [
             0.5,
@@ -30,8 +30,8 @@
         },
         "Transform": {
           "position": [
-            600.0,
-            400.0,
+            12.0,
+            5.0,
             0.0
           ],
           "rotation": [
@@ -53,7 +53,7 @@
           "fields": {
             "speed": {
               "type": "Int",
-              "value": 500
+              "value": 5
             },
             "target": {
               "type": "EntityRef",
@@ -67,12 +67,35 @@
     {
       "components": {
         "Game": {
-          "name": "2020"
+          "name": "Entity 2"
+        },
+        "Sprite": {
+          "flipX": false,
+          "flipY": false,
+          "layer": 1,
+          "path": "textures/folder.png",
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "source": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "tint": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "visible": true
         },
         "Transform": {
           "position": [
-            0.0,
-            0.0,
+            10.0,
+            5.0,
             0.0
           ],
           "rotation": [
@@ -82,13 +105,13 @@
             1.0
           ],
           "scale": [
-            1.0,
-            1.0,
+            10.0,
+            10.0,
             1.0
           ]
         }
       },
-      "id": "d6972d53-fbea-4a5a-a5ac-25073e1f96f0"
+      "id": "a2e705e1-5833-4a8c-8585-90ef79d47968"
     }
   ],
   "version": 1

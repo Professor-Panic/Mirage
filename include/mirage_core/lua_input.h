@@ -1,12 +1,32 @@
 #pragma once
+#include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <string>
 #include <unordered_map>
+#include "constants.h"
 #include "raylib.h"
 #include "sol/sol.hpp"
 #include "mirage_core/script_log.h"
+#include "mirage_core/constants.h"
 
 namespace lua_input_detail {
+
+// One-frame events (pressed / released, mouse delta, wheel) are true for a
+// single rendered frame. The player updates scripts in fixed steps, so a frame
+// can run zero steps and the event would be missed. The latch holds them until
+// a script step has seen them. While `enabled` is false (the editor), the
+// functions read raylib directly, exactly as before.
+struct Latch {
+    bool    enabled = false;
+    bool    keyPressed[512]  = {};
+    bool    keyReleased[512] = {};
+    bool    mousePressed[8]  = {};
+    bool    mouseReleased[8] = {};
+    Vector2 delta = {0, 0};
+    float   wheel = 0.0f;
+};
+inline Latch& GetLatch() { static Latch l; return l; }
 
 inline std::string NormalizeKeyName(std::string name) {
     for (char& c : name) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -83,6 +103,47 @@ inline int ParseMouseButton(std::string name) {
 
 } // namespace lua_input_detail
 
+// Player loop usage (the editor does not call these):
+//
+//   acc += std::min(GetFrameTime(), 0.25f);
+//   LatchInputFrame();                  // record this frame's presses
+//   while (acc >= step) {
+//       core.scriptSystem.UpdateScripts(step);
+//       ClearLatchedInput();            // a press is seen by exactly one step
+//       acc -= step;
+//   }
+
+// Once per rendered frame, before the update steps.
+inline void LatchInputFrame() {
+    auto& l = lua_input_detail::GetLatch();
+    l.enabled = true;
+    for (const auto& kv : lua_input_detail::KeyTable()) {
+        const int k = kv.second;
+        if (k <= 0 || k >= 512) continue;
+        if (IsKeyPressed(k))  l.keyPressed[k]  = true;
+        if (IsKeyReleased(k)) l.keyReleased[k] = true;
+    }
+    for (int b = 0; b <= MOUSE_BUTTON_BACK; ++b) {
+        if (IsMouseButtonPressed(b))  l.mousePressed[b]  = true;
+        if (IsMouseButtonReleased(b)) l.mouseReleased[b] = true;
+    }
+    const Vector2 d = GetMouseDelta();
+    l.delta.x += d.x;
+    l.delta.y += d.y;
+    l.wheel   += GetMouseWheelMove();
+}
+
+// After every script step: a press is seen by exactly one step.
+inline void ClearLatchedInput() {
+    auto& l = lua_input_detail::GetLatch();
+    std::fill(std::begin(l.keyPressed),    std::end(l.keyPressed),    false);
+    std::fill(std::begin(l.keyReleased),   std::end(l.keyReleased),   false);
+    std::fill(std::begin(l.mousePressed),  std::end(l.mousePressed),  false);
+    std::fill(std::begin(l.mouseReleased), std::end(l.mouseReleased), false);
+    l.delta = {0, 0};
+    l.wheel = 0.0f;
+}
+
 // Creates a global `input` table.
 //
 // Keyboard (key names are case-insensitive, KEY_ prefix optional):
@@ -97,7 +158,10 @@ inline int ParseMouseButton(std::string name) {
 //   input.IsMouseUp("left")         -> true while the button is NOT held
 //   input.IsMousePressed("left")    -> true only on the frame it goes down
 //   input.IsMouseReleased("left")   -> true only on the frame it is let go
-//   input.GetMousePosition()        -> { x = ..., y = ... } in window pixels
+//   input.GetMousePosition()        -> { x, y, z = 0 } in window pixels
+//   input.GetMouseWorldPosition()   -> { x, y, z = 0 } in world units
+//                                      (window pixels / kPixelsPerUnit; valid
+//                                      for the player, which has no camera)
 //   input.GetMouseX() / GetMouseY()
 //   input.GetMouseDelta()           -> { x = ..., y = ... } movement this frame
 //   input.GetMouseWheel()           -> scroll this frame (positive = away from you)
@@ -155,12 +219,16 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
 
     input.set_function("IsKeyPressed", [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
-        return key != KEY_NULL && IsKeyPressed(key);
+        if (key == KEY_NULL) return false;
+        const auto& l = lua_input_detail::GetLatch();
+        return l.enabled ? l.keyPressed[key] : IsKeyPressed(key);
     });
 
     input.set_function("IsKeyReleased", [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
-        return key != KEY_NULL && IsKeyReleased(key);
+        if (key == KEY_NULL) return false;
+        const auto& l = lua_input_detail::GetLatch();
+        return l.enabled ? l.keyReleased[key] : IsKeyReleased(key);
     });
 
     // --- mouse buttons -----------------------------------------------------
@@ -177,12 +245,16 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
 
     input.set_function("IsMousePressed", [resolveButton](sol::object button) -> bool {
         const int b = resolveButton(button);
-        return b >= 0 && IsMouseButtonPressed(b);
+        if (b < 0) return false;
+        const auto& l = lua_input_detail::GetLatch();
+        return l.enabled ? l.mousePressed[b] : IsMouseButtonPressed(b);
     });
 
     input.set_function("IsMouseReleased", [resolveButton](sol::object button) -> bool {
         const int b = resolveButton(button);
-        return b >= 0 && IsMouseButtonReleased(b);
+        if (b < 0) return false;
+        const auto& l = lua_input_detail::GetLatch();
+        return l.enabled ? l.mouseReleased[b] : IsMouseButtonReleased(b);
     });
 
     // --- mouse position, movement and wheel --------------------------------
@@ -192,6 +264,16 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
         sol::table t = lua.create_table();
         t["x"] = p.x;
         t["y"] = p.y;
+        t["z"] = 0.0f;
+        return t;
+    });
+
+    input.set_function("GetMouseWorldPosition", [&lua]() -> sol::table {
+        const Vector2 p = GetMousePosition();
+        sol::table t = lua.create_table();
+        t["x"] = p.x / kPixelsPerUnit;
+        t["y"] = p.y / kPixelsPerUnit;
+        t["z"] = 0.0f;
         return t;
     });
 
@@ -199,12 +281,16 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
     input.set_function("GetMouseY", []() -> float { return static_cast<float>(GetMouseY()); });
 
     input.set_function("GetMouseDelta", [&lua]() -> sol::table {
-        const Vector2 d = GetMouseDelta();
+        const auto& l = lua_input_detail::GetLatch();
+        const Vector2 d = l.enabled ? l.delta : GetMouseDelta();
         sol::table t = lua.create_table();
         t["x"] = d.x;
         t["y"] = d.y;
         return t;
     });
 
-    input.set_function("GetMouseWheel", []() -> float { return GetMouseWheelMove(); });
+    input.set_function("GetMouseWheel", []() -> float {
+        const auto& l = lua_input_detail::GetLatch();
+        return l.enabled ? l.wheel : GetMouseWheelMove();
+    });
 }

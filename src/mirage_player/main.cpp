@@ -10,7 +10,7 @@
 #include "mirage_core/sprite_renderer.h"
 #include "mirage_core/line_socket.h"
 #include "mirage_player/cerr_tee.h"
-
+#include "mirage_core/lua_input.h"
 using json = nlohmann::json;
 
 int main(int argc, char** argv)
@@ -31,7 +31,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    InitWindow(1200, 800, "Mirage-Player");
+    InitWindow(1600, 900, "Mirage-Player");
     // ---- connection to the editor (optional) ----
     // Declared before `core`, so it is still alive while core shuts down.
     LineSocket editor;
@@ -101,7 +101,6 @@ int main(int argc, char** argv)
     float acc = 0.0f;
     bool running = true;
     bool wasConnected = editor.Connected();
-
     while (running && !WindowShouldClose())
     {
         // Messages from the editor.
@@ -129,15 +128,17 @@ int main(int argc, char** argv)
                              {"text", "[player] " + std::to_string(dropped) + " messages dropped"}}.dump());
 
         acc += std::min(GetFrameTime(), 0.25f);
+        LatchInputFrame();
         while (acc >= step)
         {
             core.scriptSystem.UpdateScripts(step);
+            ClearLatchedInput();
             acc -= step;
         }
 
         BeginDrawing();
         ClearBackground(BLACK);
-        spriteRenderer.Draw(core.registry);
+        spriteRenderer.Draw(core.registry,64,64);
         DrawFPS(10, 10);
         EndDrawing();
     }

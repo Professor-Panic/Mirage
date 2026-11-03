@@ -1,10 +1,8 @@
 <UI class="app">
-    <Image
-    class="editor-texture"
-    texture="{inspector_texture}"
-    flipY="true"
-    />
-    <Container class="hierachy" direction="row">
+    <Viewport id="scene_view" class="editor-texture" minZoom="0.1" maxZoom="10"
+      onUpdate="{sceneViewUpdate}"
+      onBackgroundDraw="{sceneViewDraw}"/>
+    <Container class="hierachy" direction="row" showScrollbars="true">
         <for each="{GameComponents}" as="gc" state="editing=false">
             <!-- Drag source: carries the entity's stable uuid, not the runtime handle. -->
             <StringInput
@@ -26,7 +24,7 @@
                 onSubmit="{editing = false}"
             />
         </for>
-        <Button>Test</Button>
+        <Button onClick="{createEntity}">Create Entity</Button>
     </Container>
 
     <!-- Play / Edit toggle. `mode` is the C++ enum: 0 = Edit, 1 = Play. -->

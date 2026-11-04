@@ -32,6 +32,7 @@ int main(int argc, char** argv)
     }
 
     InitWindow(1600, 900, "Mirage-Player");
+    SetTargetFPS(60);
     // ---- connection to the editor (optional) ----
     // Declared before `core`, so it is still alive while core shuts down.
     LineSocket editor;

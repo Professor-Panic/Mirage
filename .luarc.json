@@ -9,6 +9,12 @@
     "speed",
     "input",
     "Vector3",
-    "Color"
-  ]
+    "Vector2",
+    "Color",
+    "eq",
+    "tostring"
+  ],
+    "diagnostics.disable": [
+        "unknown-operator"
+    ]
 }

@@ -2,53 +2,15 @@
 // ---------------------------------------------------------------------------
 // lua_functions.h - Lua bindings for the types and helpers behind `Value`.
 //
-// Two generic helpers. Both bind ONLY IF the name is not already defined in the
-// Lua state, so calling them twice, or after a script/host defined the name
-// itself, never overwrites anything. Each returns true if it bound something.
+// All public registrations are routed through LuaBindingBackend. This file
+// supplies the native value implementations and the value-type/math modules;
+// it no longer exposes a parallel, registry-bypassing registration path.
 //
-//   BindLuaUserType<T>(lua, "Name", ...)        a C++ type  -> Lua usertype
-//   BindLuaFunction(lua, "math.clamp", fn)      a function  -> Lua global / table field
-//
-// Two binders built on them. These are the only two the runtime calls:
-//
-//   BindLuaUserTypes(lua)   Vector2, Vector3, Vector4, Color
-//   BindLuaFunctions(lua)   math.clamp, math.lerp, math.sign, math.round
-//
-// BindLuaUserTypes walks the alternatives of `Value` (reflection.h) and binds
-// every one that plain Lua has no type for. How each alternative is handled:
-//
-//   bool, int, float, std::string   native Lua values, nothing to bind
-//   entt::entity                    travels as a Lua integer, nothing to bind
-//   EntityRef                       bound by BindEntityLua
-//   Vector2/3/4, Color              bound here
-//
-// A new alternative added to `Value` that is not listed above fails to compile
-// (static_assert) until it is handled here, so the two cannot drift apart.
-//
-// Call both once, after lua.open_libraries(...) (BindLuaFunctions adds to the
-// `math` table) and before any script runs.
-//
-// Lua side
-// --------
-//   Vector2(x, y)  Vector3(x, y, z)  Vector4(x, y, z, w)  Color(r, g, b [, a])
-//   Vector2() / Vector3() / Vector4() are all zeros; Color() is opaque white.
-//   `Name.new(...)` works the same as `Name(...)`.
-//
-//   v.x v.y v.z v.w          Color: c.r c.g c.b c.a (clamped to 0..255)
-//   a + b   a - b   a * b   a / b      component-wise; either side may be a number
-//   -a      a == b          tostring(a)
-//   v:Length()  v:LengthSqr()  v:Normalize()  v:Dot(o)  v:Distance(o)
-//   v:Lerp(o, t)  v:Copy()      Vector3 also has v:Cross(o)
-//   c:Lerp(o, t)  c:WithAlpha(a)  c:Copy()
-//
-// Anywhere a vector is expected, a usertype value, a plain {x=,y=,z=} table, or
-// a live component proxy (transform.position) is accepted, so
-//   transform.position = transform.position + Vector3(0, 1, 0) * dt
-// works. (proxy + proxy does not: Lua needs one side to carry the operator.)
-//
-// Value <-> Lua: ValueToLua returns these usertypes once they are bound (it
-// falls back to the old plain tables for any type that is not), and LuaToValue
-// / expose() accept them as well as tables.
+// BindLuaUserTypes(api) registers Vector2/3/4 and Color. The API registry also
+// records their Lua-visible constructors, properties, methods and operators
+// for future API definition generation.
+// ---------------------------------------------------------------------------
+
 // ---------------------------------------------------------------------------
 
 #include <algorithm>
@@ -56,6 +18,8 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <string_view>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -67,36 +31,109 @@
 #include "entt/entt.hpp"
 #include "mirage_core/entity_id.h"
 #include "mirage_core/reflection.h"      // Value
+#include "mirage_core/lua_binding_backend.h"
+
+// A native Lua userdata that refers to a composite Value stored elsewhere
+// (a reflected component field or a script-exposed field). It deliberately
+// stores accessors rather than a pointer into EnTT storage: every operation
+// resolves the live value again, so entity destruction/component removal and
+// storage relocation cannot leave a dangling pointer.
+struct LuaLiveValueHandle
+{
+    std::function<Value()> get;
+    std::function<void(Value)> set;
+
+    Value Read() const
+    {
+        if (!get) throw std::runtime_error("Invalid live value handle");
+        return get();
+    }
+
+    void Write(Value value) const
+    {
+        if (!set) throw std::runtime_error("Live value handle is read-only");
+        set(std::move(value));
+    }
+};
+
+inline bool TryReadLuaLiveMember(const Value& value, std::string_view key, double& out)
+{
+    if (key.size() != 1) return false;
+    const char k = key[0];
+
+    return std::visit([&](const auto& v) -> bool
+    {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, Vector2>)
+        {
+            if (k == 'x') { out = v.x; return true; }
+            if (k == 'y') { out = v.y; return true; }
+        }
+        else if constexpr (std::is_same_v<T, Vector3>)
+        {
+            if (k == 'x') { out = v.x; return true; }
+            if (k == 'y') { out = v.y; return true; }
+            if (k == 'z') { out = v.z; return true; }
+        }
+        else if constexpr (std::is_same_v<T, Vector4>)
+        {
+            if (k == 'x') { out = v.x; return true; }
+            if (k == 'y') { out = v.y; return true; }
+            if (k == 'z') { out = v.z; return true; }
+            if (k == 'w') { out = v.w; return true; }
+        }
+        else if constexpr (std::is_same_v<T, Color>)
+        {
+            if (k == 'r') { out = v.r; return true; }
+            if (k == 'g') { out = v.g; return true; }
+            if (k == 'b') { out = v.b; return true; }
+            if (k == 'a') { out = v.a; return true; }
+        }
+        return false;
+    }, value);
+}
+
+inline bool TryWriteLuaLiveMember(Value& value, std::string_view key, double number)
+{
+    if (key.size() != 1) return false;
+    const char k = key[0];
+    const float f = static_cast<float>(number);
+
+    return std::visit([&](auto& v) -> bool
+    {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, Vector2>)
+        {
+            if (k == 'x') { v.x = f; return true; }
+            if (k == 'y') { v.y = f; return true; }
+        }
+        else if constexpr (std::is_same_v<T, Vector3>)
+        {
+            if (k == 'x') { v.x = f; return true; }
+            if (k == 'y') { v.y = f; return true; }
+            if (k == 'z') { v.z = f; return true; }
+        }
+        else if constexpr (std::is_same_v<T, Vector4>)
+        {
+            if (k == 'x') { v.x = f; return true; }
+            if (k == 'y') { v.y = f; return true; }
+            if (k == 'z') { v.z = f; return true; }
+            if (k == 'w') { v.w = f; return true; }
+        }
+        else if constexpr (std::is_same_v<T, Color>)
+        {
+            const auto channel = static_cast<unsigned char>(
+                number < 0.0 ? 0.0 : number > 255.0 ? 255.0 : number);
+            if (k == 'r') { v.r = channel; return true; }
+            if (k == 'g') { v.g = channel; return true; }
+            if (k == 'b') { v.b = channel; return true; }
+            if (k == 'a') { v.a = channel; return true; }
+        }
+        return false;
+    }, value);
+}
 
 namespace lua_functions_detail {
-
-inline std::vector<std::string> SplitPath(const std::string& path)
-{
-    std::vector<std::string> parts;
-    std::string current;
-
-    for (char c : path)
-    {
-        if (c == '.') { parts.push_back(current); current.clear(); }
-        else          { current += c; }
-    }
-    parts.push_back(current);
-    return parts;
-}
-
-inline bool ValidPath(const std::vector<std::string>& parts)
-{
-    for (const std::string& p : parts)
-        if (p.empty()) return false;
-    return !parts.empty();
-}
-
-inline bool IsNil(const sol::object& o)
-{
-    return !o.valid() ||
-           o.get_type() == sol::type::lua_nil ||
-           o.get_type() == sol::type::none;
-}
 
 inline std::string TypeFlagKey(const std::string& name)
 {
@@ -105,34 +142,7 @@ inline std::string TypeFlagKey(const std::string& name)
 
 }  // namespace lua_functions_detail
 
-// ---------------------------------------------------------------------------
-// Existence checks
-// ---------------------------------------------------------------------------
-
-// True if `path` ("Vector3", "math.clamp", "a.b.c") already names something
-// (anything but nil) in the Lua state.
-inline bool LuaPathExists(sol::state& lua, const std::string& path)
-{
-    using namespace lua_functions_detail;
-
-    const std::vector<std::string> parts = SplitPath(path);
-    if (!ValidPath(parts)) return false;
-
-    sol::object current = lua.globals();
-
-    for (const std::string& part : parts)
-    {
-        if (current.get_type() != sol::type::table) return false;
-
-        sol::table scope = current.as<sol::table>();
-        current = scope.get<sol::object>(part);
-
-        if (IsNil(current)) return false;
-    }
-    return true;
-}
-
-// True if BindLuaUserType bound a usertype under this name (as opposed to the
+// True if LuaBindingBackend bound a usertype under this name (as opposed to the
 // name having been taken by something else). ValueToLua uses it to decide
 // between a usertype and the plain-table fallback.
 inline bool LuaTypeBound(sol::state_view lua, const std::string& name)
@@ -143,92 +153,58 @@ inline bool LuaTypeBound(sol::state_view lua, const std::string& name)
            flag.as<bool>();
 }
 
-// ---------------------------------------------------------------------------
-// 1. Bind a custom user type
-//
-// Two ways to describe the type:
-//
-//   // sol's own key/value form
-//   BindLuaUserType<Foo>(lua, "Foo",
-//       sol::call_constructor, sol::factories([] { return Foo{}; }),
-//       "bar", &Foo::bar);
-//
-//   // or one callable that receives the usertype (lets you use if constexpr,
-//   // loops, helper functions...)
-//   BindLuaUserType<Foo>(lua, "Foo", [](sol::usertype<Foo>& t) {
-//       t["bar"] = &Foo::bar;
-//   });
-//
-// Returns false, and changes nothing, if `name` is already defined.
-// ---------------------------------------------------------------------------
-template <class T, class... Args>
-bool BindLuaUserType(sol::state& lua, const std::string& name, Args&&... args)
+// Native metamethods for the internal live-value userdata. These remain plain
+// function pointers, consistent with the other Sol2 registrations in this file.
+inline sol::object LuaLiveValueIndex(
+    sol::this_state state,
+    const LuaLiveValueHandle& handle,
+    sol::object key)
 {
-    if (lua_functions_detail::SplitPath(name).size() != 1 || name.empty())
-        return false;                                   // types are plain globals
-    if (LuaPathExists(lua, name))
-        return false;
+    sol::state_view view(state);
+    if (!key.is<std::string>())
+        return sol::make_object(view, sol::lua_nil);
 
-    if constexpr (sizeof...(Args) == 1 &&
-                  (std::is_invocable_v<Args, sol::usertype<T>&> && ...))
-    {
-        sol::usertype<T> type = lua.new_usertype<T>(name);
-        (std::forward<Args>(args)(type), ...);
-    }
-    else
-    {
-        lua.new_usertype<T>(name, std::forward<Args>(args)...);
-    }
+    const Value current = handle.Read();
+    double number = 0.0;
+    if (TryReadLuaLiveMember(current, key.as<std::string>(), number))
+        return sol::make_object(view, number);
 
-    lua.registry()[lua_functions_detail::TypeFlagKey(name)] = true;
-    return true;
+    return sol::make_object(view, sol::lua_nil);
 }
 
-// ---------------------------------------------------------------------------
-// 2. Bind a custom function
-//
-//   BindLuaFunction(lua, "Spawn", [](const std::string& name) { ... });
-//   BindLuaFunction(lua, "math.clamp", [](double x, double lo, double hi) {...});
-//   BindLuaFunction(lua, "game.audio.play", &PlaySound);   // creates game, audio
-//
-// A dotted path puts the function inside tables, creating missing ones. Returns
-// false, and changes nothing, if the final name is already defined or a part of
-// the path is already taken by something that is not a table (e.g. "print.x").
-// ---------------------------------------------------------------------------
-template <class Fn>
-bool BindLuaFunction(sol::state& lua, const std::string& path, Fn&& fn)
+inline void LuaLiveValueNewIndex(
+    const LuaLiveValueHandle& handle,
+    sol::object key,
+    sol::object value)
 {
-    using namespace lua_functions_detail;
+    if (!key.is<std::string>())
+        throw sol::error("Live vector/color fields require a string key");
+    if (value.get_type() != sol::type::number)
+        throw sol::error("Vector/color members must be numbers");
 
-    const std::vector<std::string> parts = SplitPath(path);
-    if (!ValidPath(parts)) return false;
-    if (LuaPathExists(lua, path)) return false;
+    const std::string member = key.as<std::string>();
+    Value current = handle.Read();
+    if (!TryWriteLuaLiveMember(current, member, value.as<double>()))
+        throw sol::error("Unknown vector/color member: " + member);
+    handle.Write(std::move(current));
+}
 
-    // Walk to the table that will hold the function, without creating anything
-    // yet, so a refused bind leaves no stray empty tables behind.
-    sol::object current = lua.globals();
-    std::size_t firstMissing = parts.size() - 1;
-
-    for (std::size_t i = 0; i + 1 < parts.size(); ++i)
-    {
-        sol::table scope = current.as<sol::table>();
-        sol::object next = scope.get<sol::object>(parts[i]);
-
-        if (IsNil(next)) { firstMissing = i; break; }
-        if (next.get_type() != sol::type::table) return false;   // name taken by a non-table
-        current = next;
-    }
-
-    sol::table scope = current.as<sol::table>();
-    for (std::size_t i = firstMissing; i + 1 < parts.size(); ++i)
-    {
-        sol::table created = lua.create_table();
-        scope[parts[i]] = created;
-        scope = created;
-    }
-
-    scope.set_function(parts.back(), std::forward<Fn>(fn));
-    return true;
+// Register the internal live-value wrapper as native userdata. Its metamethods
+// expose vector/color channels while keeping the underlying value live.
+inline int BindLuaLiveValueHandle(sol::state& lua, LuaBindingBackend& api)
+{
+    ScriptApiType description;
+    description.name = "_MirageLiveValueHandle";
+    description.cppType = "LuaLiveValueHandle";
+    description.description = "Internal live view of a reflected vector or color field.";
+    description.internal = true;
+    api.BindUserType<LuaLiveValueHandle>(lua, std::move(description),
+        [](sol::usertype<LuaLiveValueHandle>& type)
+        {
+            type[sol::meta_function::index] = &LuaLiveValueIndex;
+            type[sol::meta_function::new_index] = &LuaLiveValueNewIndex;
+        });
+    return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,14 +281,24 @@ inline bool ToNumber(const sol::object& o, float& out)
     return true;
 }
 
-// A vector from the usertype, or from any table with exactly the right keys
-// (this includes live component proxies, whose x/y/z come from __index).
+// A vector from the usertype, live-value userdata, or a table with exactly
+// the right keys. Live-value userdata resolves x/y/z through __index.
 // A Vector3 table is NOT accepted as a Vector2, so a component is never dropped
 // silently.
 template <class V>
 bool ToVec(const sol::object& o, V& out)
 {
     if (o.is<V>()) { out = o.as<V>(); return true; }
+    if (o.is<LuaLiveValueHandle>())
+    {
+        const Value value = o.as<LuaLiveValueHandle>().Read();
+        if (const auto* typed = std::get_if<V>(&value))
+        {
+            out = *typed;
+            return true;
+        }
+        return false;
+    }
     if (o.get_type() != sol::type::table) return false;
 
     sol::table t = o.as<sol::table>();
@@ -347,6 +333,16 @@ inline unsigned char Channel(double v)
 inline bool ToColor(const sol::object& o, Color& out)
 {
     if (o.is<Color>()) { out = o.as<Color>(); return true; }
+    if (o.is<LuaLiveValueHandle>())
+    {
+        const Value value = o.as<LuaLiveValueHandle>().Read();
+        if (const auto* typed = std::get_if<Color>(&value))
+        {
+            out = *typed;
+            return true;
+        }
+        return false;
+    }
     if (o.get_type() != sol::type::table) return false;
 
     sol::table t = o.as<sol::table>();
@@ -615,16 +611,99 @@ inline double MathRound(double x) { return std::round(x); }      // halves round
 
 // ---------------------------------------------------------------------------
 // BindLuaUserTypes - one step per alternative of `Value`.
-// Returns how many types were newly bound (a name that already existed is
-// skipped, see BindLuaUserType).
+// Every registration goes through LuaBindingBackend so runtime bindings and
+// the metadata consumed by future tooling cannot drift apart.
 // ---------------------------------------------------------------------------
 namespace lua_functions_detail {
 
 template <class T> inline constexpr bool kUnhandledValueType = false;
 
-// How one alternative of Value reaches Lua. Returns 1 if it bound a usertype.
+inline ScriptApiParameter ApiParam(std::string name, std::string type,
+                                   bool optional = false, bool variadic = false,
+                                   std::string defaultValue = {})
+{
+    return { std::move(name), std::move(type), optional, variadic, std::move(defaultValue) };
+}
+
+inline ScriptApiCallable ApiCall(std::string name, std::string description,
+                                 std::vector<ScriptApiParameter> parameters,
+                                 std::vector<std::string> returns)
+{
+    return { std::move(name), std::move(description), std::move(parameters), std::move(returns), false };
+}
+
+template <class V>
+ScriptApiType VectorApiType(const char* name)
+{
+    ScriptApiType type;
+    type.name = name;
+    type.cppType = name;
+    type.description = std::string(name) + " value type. Supports component-wise arithmetic with other vectors or numbers.";
+    type.ownership = "value";
+    type.operators = { "+", "-", "*", "/", "unary -", "==", "tostring" };
+    type.properties.push_back({ "x", "number", "X component", false });
+    type.properties.push_back({ "y", "number", "Y component", false });
+    if constexpr (!kIsVec2<V>) type.properties.push_back({ "z", "number", "Z component", false });
+    if constexpr (kIsVec4<V>) type.properties.push_back({ "w", "number", "W component", false });
+
+    type.constructors.push_back(ApiCall("new", "Create a zero-initialized value", {}, { name }));
+    if constexpr (kIsVec2<V>)
+        type.constructors.push_back(ApiCall("new", "Create a vector from its components",
+            { ApiParam("x", "number"), ApiParam("y", "number") }, { name }));
+    else if constexpr (kIsVec3<V>)
+        type.constructors.push_back(ApiCall("new", "Create a vector from its components",
+            { ApiParam("x", "number"), ApiParam("y", "number"), ApiParam("z", "number") }, { name }));
+    else
+        type.constructors.push_back(ApiCall("new", "Create a vector from its components",
+            { ApiParam("x", "number"), ApiParam("y", "number"), ApiParam("z", "number"), ApiParam("w", "number") }, { name }));
+
+    type.methods.push_back(ApiCall("Length", "Return the vector magnitude", {}, { "number" }));
+    type.methods.push_back(ApiCall("LengthSqr", "Return the squared vector magnitude", {}, { "number" }));
+    type.methods.push_back(ApiCall("Copy", "Return a copy of this vector", {}, { name }));
+    type.methods.push_back(ApiCall("Normalize", "Return a normalized copy; zero remains zero", {}, { name }));
+    type.methods.push_back(ApiCall("Dot", "Return the dot product with another vector",
+        { ApiParam("other", name) }, { "number" }));
+    type.methods.push_back(ApiCall("Distance", "Return the distance to another vector",
+        { ApiParam("other", name) }, { "number" }));
+    type.methods.push_back(ApiCall("Lerp", "Linearly interpolate to another vector",
+        { ApiParam("other", name), ApiParam("amount", "number") }, { name }));
+    if constexpr (kIsVec3<V>)
+        type.methods.push_back(ApiCall("Cross", "Return the cross product with another Vector3",
+            { ApiParam("other", "Vector3") }, { "Vector3" }));
+    return type;
+}
+
+inline ScriptApiType ColorApiType()
+{
+    ScriptApiType type;
+    type.name = "Color";
+    type.cppType = "Color";
+    type.description = "RGBA color. Channels are integers clamped to the range 0..255.";
+    type.ownership = "value";
+    type.operators = { "==", "tostring" };
+    type.properties = {
+        { "r", "integer", "Red channel", false },
+        { "g", "integer", "Green channel", false },
+        { "b", "integer", "Blue channel", false },
+        { "a", "integer", "Alpha channel", false }
+    };
+    type.constructors.push_back(ApiCall("new", "Create opaque white", {}, { "Color" }));
+    type.constructors.push_back(ApiCall("new", "Create a color from RGB channels",
+        { ApiParam("r", "number"), ApiParam("g", "number"), ApiParam("b", "number") }, { "Color" }));
+    type.constructors.push_back(ApiCall("new", "Create a color from RGBA channels",
+        { ApiParam("r", "number"), ApiParam("g", "number"), ApiParam("b", "number"), ApiParam("a", "number") }, { "Color" }));
+    type.methods.push_back(ApiCall("Copy", "Return a copy of this color", {}, { "Color" }));
+    type.methods.push_back(ApiCall("WithAlpha", "Return a copy with a different alpha channel",
+        { ApiParam("alpha", "number") }, { "Color" }));
+    type.methods.push_back(ApiCall("Lerp", "Interpolate to another color",
+        { ApiParam("other", "Color"), ApiParam("amount", "number") }, { "Color" }));
+    return type;
+}
+
+// How one alternative of Value reaches Lua. C++-native Lua primitives need no
+// usertype; engine value types are bound and described through the registry.
 template <class T>
-int BindValueAlternative(sol::state& lua)
+int BindValueAlternative(sol::state& lua, LuaBindingBackend& api)
 {
     if constexpr (std::is_same_v<T, bool>        ||
                   std::is_same_v<T, int>         ||
@@ -632,29 +711,31 @@ int BindValueAlternative(sol::state& lua)
                   std::is_same_v<T, std::string> ||
                   std::is_same_v<T, entt::entity>)
     {
-        return 0;                               // native Lua value / integer
+        return 0;
     }
     else if constexpr (std::is_same_v<T, EntityRef>)
     {
-        return 0;                               // BindEntityLua owns it
+        return 0; // EntityRef is registered by the entity API module.
     }
     else if constexpr (std::is_same_v<T, Vector2>)
     {
-        return BindLuaUserType<Vector2>(lua, "Vector2", &ConfigureVector<Vector2>);
+        api.BindUserType<Vector2>(lua, VectorApiType<Vector2>("Vector2"), &ConfigureVector<Vector2>);
+        return 1;
     }
     else if constexpr (std::is_same_v<T, Vector3>)
     {
-        return BindLuaUserType<Vector3>(lua, "Vector3", &ConfigureVector<Vector3>);
+        api.BindUserType<Vector3>(lua, VectorApiType<Vector3>("Vector3"), &ConfigureVector<Vector3>);
+        return 1;
     }
     else if constexpr (std::is_same_v<T, Vector4>)
     {
-        // Vector4 is also raylib's Quaternion (same type), so
-        // transform.rotation is a Vector4 too.
-        return BindLuaUserType<Vector4>(lua, "Vector4", &ConfigureVector<Vector4>);
+        api.BindUserType<Vector4>(lua, VectorApiType<Vector4>("Vector4"), &ConfigureVector<Vector4>);
+        return 1;
     }
     else if constexpr (std::is_same_v<T, Color>)
     {
-        return BindLuaUserType<Color>(lua, "Color", &ConfigureColor);
+        api.BindUserType<Color>(lua, ColorApiType(), &ConfigureColor);
+        return 1;
     }
     else
     {
@@ -666,31 +747,48 @@ int BindValueAlternative(sol::state& lua)
 }
 
 template <class... Ts>
-int BindValueAlternatives(sol::state& lua, const std::variant<Ts...>*)
+int BindValueAlternatives(sol::state& lua, LuaBindingBackend& api,
+                          const std::variant<Ts...>*)
 {
-    return (0 + ... + BindValueAlternative<Ts>(lua));
+    return (0 + ... + BindValueAlternative<Ts>(lua, api));
 }
 
 }  // namespace lua_functions_detail
 
-inline int BindLuaUserTypes(sol::state& lua)
+inline int BindLuaUserTypes(sol::state& lua, LuaBindingBackend& api)
 {
-    return lua_functions_detail::BindValueAlternatives(lua, static_cast<const Value*>(nullptr));
+    return lua_functions_detail::BindValueAlternatives(
+        lua, api, static_cast<const Value*>(nullptr));
 }
 
 // ---------------------------------------------------------------------------
-// BindLuaFunctions - small numeric helpers Lua's math library lacks.
-// Returns how many were newly bound.
+// BindLuaFunctions - numeric helpers added to Lua's math library.
 // ---------------------------------------------------------------------------
-inline int BindLuaFunctions(sol::state& lua)
+inline int BindLuaFunctions(sol::state& lua, LuaBindingBackend& api)
 {
     using namespace lua_functions_detail;
     int bound = 0;
 
-    bound += BindLuaFunction(lua, "math.clamp", &MathClamp);
-    bound += BindLuaFunction(lua, "math.lerp",  &MathLerp);
-    bound += BindLuaFunction(lua, "math.sign",  &MathSign);
-    bound += BindLuaFunction(lua, "math.round", &MathRound);
+    api.BindGlobalFunction(lua, "math.clamp",
+        ApiCall("clamp", "Clamp a number between a minimum and maximum",
+            { ApiParam("value", "number"), ApiParam("minimum", "number"), ApiParam("maximum", "number") }, { "number" }),
+        &MathClamp);
+    ++bound;
+    api.BindGlobalFunction(lua, "math.lerp",
+        ApiCall("lerp", "Linearly interpolate between two numbers",
+            { ApiParam("a", "number"), ApiParam("b", "number"), ApiParam("amount", "number") }, { "number" }),
+        &MathLerp);
+    ++bound;
+    api.BindGlobalFunction(lua, "math.sign",
+        ApiCall("sign", "Return -1, 0, or 1 based on the sign of a number",
+            { ApiParam("value", "number") }, { "number" }),
+        &MathSign);
+    ++bound;
+    api.BindGlobalFunction(lua, "math.round",
+        ApiCall("round", "Round to the nearest integer; halves round away from zero",
+            { ApiParam("value", "number") }, { "number" }),
+        &MathRound);
+    ++bound;
 
     return bound;
 }

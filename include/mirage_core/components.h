@@ -3,6 +3,9 @@
 #include "raylib.h"
 #include "raymath.h"
 #include "string"
+#include <algorithm>
+#include <cctype>
+#include <vector>
 // ---------------------------------------------------------------------------
 // Rotation helpers: Euler angles (degrees) <-> quaternion.
 //
@@ -106,6 +109,72 @@ struct TransformComponent {
     {
         eulerHint = degrees;
         rotation  = rotation::FromEulerDegrees(degrees);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Tags: free-form labels on an entity ("boid", "enemy"), used to find groups of
+// entities from Lua (Entities.FindWithTag). Stored as ONE comma-separated string
+// so it saves, loads, clones and shows in the inspector like any string field.
+// Tags are case-sensitive, surrounding spaces are ignored, and a tag cannot
+// contain a comma.
+// ---------------------------------------------------------------------------
+struct TagsComponent {
+    std::string tags;       // "boid, flock"
+
+    static std::string Trim(const std::string& s)
+    {
+        std::size_t a = 0, b = s.size();
+        while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+        while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+        return s.substr(a, b - a);
+    }
+
+    std::vector<std::string> List() const
+    {
+        std::vector<std::string> out;
+        std::string current;
+        for (char c : tags + ",")
+        {
+            if (c == ',')
+            {
+                const std::string t = Trim(current);
+                if (!t.empty()) out.push_back(t);
+                current.clear();
+            }
+            else current += c;
+        }
+        return out;
+    }
+
+    bool Has(const std::string& tag) const
+    {
+        const std::string wanted = Trim(tag);
+        if (wanted.empty()) return false;
+        const std::vector<std::string> all = List();
+        return std::find(all.begin(), all.end(), wanted) != all.end();
+    }
+
+    // false if the tag is empty, contains a comma, or is already present.
+    bool Add(const std::string& tag)
+    {
+        const std::string t = Trim(tag);
+        if (t.empty() || t.find(',') != std::string::npos || Has(t)) return false;
+        tags = tags.empty() ? t : tags + ", " + t;
+        return true;
+    }
+
+    // false if the tag was not there.
+    bool Remove(const std::string& tag)
+    {
+        const std::string wanted = Trim(tag);
+        std::vector<std::string> all = List();
+        const auto it = std::find(all.begin(), all.end(), wanted);
+        if (it == all.end()) return false;
+        all.erase(it);
+        tags.clear();
+        for (const std::string& t : all) tags += tags.empty() ? t : ", " + t;
+        return true;
     }
 };
 

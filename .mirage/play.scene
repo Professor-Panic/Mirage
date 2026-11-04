@@ -3,64 +3,65 @@
     {
       "components": {
         "Game": {
-          "name": "Entity"
-        },
-        "Sprite": {
-          "flipX": false,
-          "flipY": false,
-          "layer": 1,
-          "path": "textures/Mechanic guy.png",
-          "pivot": [
-            0.5,
-            0.5
-          ],
-          "source": [
-            0.0,
-            0.0,
-            0.0,
-            0.0
-          ],
-          "tint": [
-            255,
-            255,
-            255,
-            255
-          ],
-          "visible": true
+          "name": "Boids Manager"
         },
         "Transform": {
           "position": [
-            2.426213264465332,
-            3.1545639038085938,
+            0.0,
+            0.0,
             0.0
           ],
           "rotation": [
-            -0.03435929864645004,
-            0.00018210332200396806,
-            0.010789263062179089,
-            0.9993512630462646
+            0.0,
+            0.0,
+            0.0,
+            1.0
           ],
           "scale": [
-            10.0,
-            10.0,
+            1.0,
+            1.0,
             1.0
           ]
         }
       },
-      "id": "3fa30f47-a832-44b4-95ec-cb58d98884f9",
+      "id": "1ad0e321-dd0f-4cf4-9327-a920f2f66662",
       "scripts": [
         {
           "fields": {
-            "speed": {
+            "AlignmentWeight": {
+              "type": "Int",
+              "value": 1
+            },
+            "BoidVelocity": {
               "type": "Int",
               "value": 5
             },
-            "target": {
-              "type": "EntityRef",
-              "value": ""
+            "CohesionWeight": {
+              "type": "Int",
+              "value": 1
+            },
+            "ConeAngle": {
+              "type": "Int",
+              "value": 270
+            },
+            "NumBoids": {
+              "type": "Int",
+              "value": 300
+            },
+            "SeparationWeight": {
+              "type": "Int",
+              "value": 1
+            },
+            "SightRadius": {
+              "type": "Int",
+              "value": 3
+            },
+            "TurnSpeed": {
+              "type": "Int",
+              "value": 120
             }
           },
-          "path": "scripts/test.lua"
+          "path": "scripts/manager.lua"
         }
       ]
     }

@@ -5,6 +5,8 @@
 #include <functional>
 #include <type_traits>
 #include <map>
+#include <memory>
+#include <string_view>
 #include <string>
 #include <variant>
 #include <vector>
@@ -30,14 +32,33 @@ struct FieldInfo{
     bool  hidden = false;           // not shown in the inspector
     bool  transient = false;        // derived from other fields: never saved to a scene file
     std::string label;              // inspector text; empty = use `name`
+    // Address of the member inside the component. Set by Builder::Field only;
+    // null for computed Property fields, which must go through get/set.
+    std::function<void*(void*)> addr;
+    bool scriptExposed = true;       // considered only when its component is script-exposed
+    std::string scriptDescription; // Lua-facing documentation
+    bool scriptReadOnly = false;
+    bool scriptCustomBinding = false;
+    std::string scriptBindingNotes;
 };
 struct ComponentInfo{
     std::string name;
     std::vector<FieldInfo> fields;
     bool isTag = false;
+    bool scriptExposed = false;
+    std::string scriptName;
+    std::string scriptDescription;
     std::function<void(entt::registry&, entt::entity)>  add;
     std::function<void(entt::registry&, entt::entity)>  remove;
     std::function<void*(entt::registry&, entt::entity)> find;
+
+    // Index of the field called `fieldName`, or -1. Resolve once and keep the
+    // index: fields never change after registration.
+    int FieldIndex(std::string_view fieldName) const {
+        for (std::size_t i = 0; i < fields.size(); ++i)
+            if (fields[i].name == fieldName) return static_cast<int>(i);
+        return -1;
+    }
 };
 class Reflection {
 public:
@@ -51,6 +72,9 @@ public:
                 [member](const void* c) { return Value(static_cast<const C*>(c)->*member); },
                 [member](void* c, Value v) { static_cast<C*>(c)->*member = std::get<F>(v); }
             });
+            info.fields.back().addr = [member](void* c) -> void* {
+                return std::addressof(static_cast<C*>(c)->*member);
+            };
             return *this;
         }
 
@@ -74,6 +98,35 @@ public:
         Builder& Hidden()    { if (!info.fields.empty()) info.fields.back().hidden = true;    return *this; }
         Builder& Transient() { if (!info.fields.empty()) info.fields.back().transient = true; return *this; }
         Builder& Label(std::string text) { if (!info.fields.empty()) info.fields.back().label = std::move(text); return *this; }
+        Builder& ScriptDescription(std::string text) {
+            if (!info.fields.empty()) info.fields.back().scriptDescription = std::move(text);
+            return *this;
+        }
+        Builder& ScriptHidden() {
+            if (!info.fields.empty()) info.fields.back().scriptExposed = false;
+            return *this;
+        }
+        Builder& ScriptReadOnly() {
+            if (!info.fields.empty()) info.fields.back().scriptReadOnly = true;
+            return *this;
+        }
+        Builder& ScriptCustomBinding(std::string notes = {}) {
+            if (!info.fields.empty()) {
+                info.fields.back().scriptCustomBinding = true;
+                info.fields.back().scriptBindingNotes = std::move(notes);
+            }
+            return *this;
+        }
+        Builder& ScriptExposed(std::string description = {}) {
+            info.scriptExposed = true;
+            if (info.scriptName.empty()) info.scriptName = info.name;
+            info.scriptDescription = std::move(description);
+            return *this;
+        }
+        Builder& ScriptName(std::string name) {
+            info.scriptName = std::move(name);
+            return *this;
+        }
 
         // Replaces info.add so it constructs C with these args instead of C().
         template<class... Args>
@@ -107,6 +160,20 @@ public:
     const ComponentInfo* Find(const std::string& name) const {
         auto it = components_.find(name);
         return it == components_.end() ? nullptr : &it->second;
+    }
+
+    // Resolve either the internal C++ registration name or the public Lua
+    // name. ScriptName changes the latter, so all script-facing lookups must
+    // use this function rather than Find() directly.
+    const ComponentInfo* FindScriptExposed(const std::string& name) const {
+        if (const ComponentInfo* exact = Find(name); exact && exact->scriptExposed)
+            return exact;
+        for (const auto& [registeredName, info] : components_) {
+            if (!info.scriptExposed) continue;
+            const std::string& exposedName = info.scriptName.empty() ? registeredName : info.scriptName;
+            if (exposedName == name) return &info;
+        }
+        return nullptr;
     }
     const std::map<std::string, ComponentInfo>& All() const { return components_; }
 private:

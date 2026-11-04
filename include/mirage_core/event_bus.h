@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <sol/sol.hpp>
+#include "mirage_core/lua_binding_backend.h"
 
 // Named events between scripts: the sender does not know who listens and the
 // listener does not know who sends. It decouples responsibility, not access:
@@ -199,10 +200,23 @@ private:
 
 // The Lua side. `owned` listeners are tied to `owner` (a script's liveness token);
 // the global Events table (not owned) lives until EventBus::Clear().
-inline sol::table MakeEventsTable(sol::state_view lua, EventBus& bus,
-                                  bool owned, EventBus::Owner owner)
+inline ScriptApiCallable EventApiCall(std::string name, std::string description,
+                                      std::vector<ScriptApiParameter> parameters,
+                                      std::vector<std::string> returns)
 {
-    sol::table events = lua.create_table();
+    ScriptApiCallable call{ std::move(name), std::move(description),
+                            std::move(parameters), std::move(returns), false };
+    call.customBinding = true;
+    call.bindingNotes = "Lua callback and variadic argument marshalling is handled by Mirage's EventBus bridge.";
+    return call;
+}
+
+inline sol::table MakeEventsTable(sol::state_view lua, EventBus& bus,
+                                  bool owned, EventBus::Owner owner,
+                                  LuaBindingBackend& api)
+{
+    sol::table events = api.CreateTable(lua,
+        { "Events", "Named event listeners and event dispatch between scripts.", false, {} });
 
     const auto collect = [](sol::variadic_args va)
     {
@@ -213,28 +227,38 @@ inline sol::table MakeEventsTable(sol::state_view lua, EventBus& bus,
         return args;
     };
 
-    events.set_function("Latch",
+    api.BindTableFunction(events, "Events",
+        EventApiCall("Latch", "Subscribe to an event. Returns a listener ID.",
+            { { "name", "string", false, false, {} }, { "callback", "function", false, false, {} } }, { "integer" }),
         [&bus, owned, owner](const std::string& name, sol::protected_function fn) -> std::uint64_t
         {
             return bus.On(name, std::move(fn), owned, owner, false);
         });
 
-    events.set_function("LatchOnce",
+    api.BindTableFunction(events, "Events",
+        EventApiCall("LatchOnce", "Subscribe to an event for one invocation only.",
+            { { "name", "string", false, false, {} }, { "callback", "function", false, false, {} } }, { "integer" }),
         [&bus, owned, owner](const std::string& name, sol::protected_function fn) -> std::uint64_t
         {
             return bus.On(name, std::move(fn), owned, owner, true);
         });
 
-    events.set_function("Release",
+    api.BindTableFunction(events, "Events",
+        EventApiCall("Release", "Remove a listener by its ID.",
+            { { "id", "integer", false, false, {} } }, { "boolean" }),
         [&bus](std::uint64_t id) { return bus.Off(id); });
 
-    events.set_function("Emit",
+    api.BindTableFunction(events, "Events",
+        EventApiCall("Emit", "Immediately invoke listeners and return the number called.",
+            { { "name", "string", false, false, {} }, { "...", "any", true, true, {} } }, { "integer" }),
         [&bus, collect](const std::string& name, sol::variadic_args va)
         {
             return bus.Emit(name, collect(va));
         });
 
-    events.set_function("Post",
+    api.BindTableFunction(events, "Events",
+        EventApiCall("Post", "Queue an event for delivery after the current script update.",
+            { { "name", "string", false, false, {} }, { "...", "any", true, true, {} } }, { "nil" }),
         [&bus, collect](const std::string& name, sol::variadic_args va)
         {
             bus.Post(name, collect(va));

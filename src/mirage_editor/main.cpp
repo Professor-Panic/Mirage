@@ -3,6 +3,7 @@
 
 #include "mirage_core/asset_manager.h"
 #include "mirage_core/runtime.h"
+#include "mirage_core/lua_api_codegen.h"
 #include "mirage_core/sprite_renderer.h"
 
 #include "mirage_editor/console_ui.h"
@@ -16,8 +17,44 @@
 #include "mirage_editor/scene_files.h"
 #include "mirage_editor/viewport_tools.h"
 
-int main()
+#include <filesystem>
+#include <iostream>
+#include <string>
+
+int main(int argc, char** argv)
 {
+    // Generate LuaLS definitions without creating a Raylib window. The runtime
+    // constructor builds the complete reflection + Script API Registry, then
+    // the code generator writes the same API metadata used by Sol2 at runtime.
+    if (argc >= 2 && std::string(argv[1]) == "--generate-lua-api")
+    {
+        const std::filesystem::path outputPath =
+            (argc >= 3 && argv[2][0] != '-') ? std::filesystem::path(argv[2])
+                                             : std::filesystem::path("_engine.lua");
+        try
+        {
+            MirageCoreRuntime core;
+            LuaApiCodeGenerator generator;
+            const bool changed = generator.WriteFile(core.scriptApi, outputPath);
+            std::cout << (changed ? "Generated " : "Already up to date: ")
+                      << outputPath.string() << '\n';
+            return 0;
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "Lua API generation failed: " << error.what() << '\n';
+            return 1;
+        }
+    }
+
+    if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h"))
+    {
+        std::cout << "Mirage editor options:\n"
+                  << "  --generate-lua-api [output-path]  Generate LuaLS definitions (default: _engine.lua)\n"
+                  << "  --help                            Show this help\n";
+        return 0;
+    }
+
     // ---------------------------------------------------------
     // Engine
     // ---------------------------------------------------------
@@ -55,6 +92,7 @@ int main()
     inspector.Watch<GameComponent>();
     inspector.Watch<ScriptComponent>();
     inspector.Watch<SpriteComponent>();
+    inspector.Watch<TagsComponent>();
 
     // Right-click menus and the Add Component dropdown.
     EditorMenus menus(ui, core.registry, core.reflection, core.entityBus, state.selected);

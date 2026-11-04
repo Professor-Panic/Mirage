@@ -8,6 +8,7 @@
 #include "raylib.h"
 #include "sol/sol.hpp"
 #include "mirage_core/script_log.h"
+#include "mirage_core/lua_binding_backend.h"
 #include "mirage_core/constants.h"
 
 namespace lua_input_detail {
@@ -144,6 +145,22 @@ inline void ClearLatchedInput() {
     l.wheel = 0.0f;
 }
 
+inline ScriptApiCallable InputApiCall(std::string name, std::string description,
+                                      std::vector<ScriptApiParameter> parameters,
+                                      std::vector<std::string> returns)
+{
+    ScriptApiCallable call{ std::move(name), std::move(description),
+                            std::move(parameters), std::move(returns), false };
+    call.customBinding = true;
+    call.bindingNotes = "Uses Mirage's Raylib input bridge, key/button name normalization, and fixed-step input latch.";
+    return call;
+}
+
+inline ScriptApiParameter InputApiParam(std::string name, std::string type)
+{
+    return { std::move(name), std::move(type), false, false, {} };
+}
+
 // Creates a global `input` table.
 //
 // Keyboard (key names are case-insensitive, KEY_ prefix optional):
@@ -167,8 +184,9 @@ inline void ClearLatchedInput() {
 //   input.GetMouseWheel()           -> scroll this frame (positive = away from you)
 //
 // Unknown key or button names return false and are reported once to `log`.
-inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
-    sol::table input = lua.create_named_table("input");
+inline void BindLuaInput(sol::state& lua, ScriptLog& log, LuaBindingBackend& api) {
+    sol::table input = api.CreateGlobalTable(lua,
+        { "input", "Keyboard and mouse input state for the current frame.", false, {} });
 
     auto resolve = [&log](const std::string& name) -> int {
         const int key = lua_input_detail::ParseKey(name);
@@ -207,24 +225,28 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
 
     // --- keyboard ----------------------------------------------------------
 
-    input.set_function("IsKeyDown", [resolve](const std::string& name) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsKeyDown", "Check whether a keyboard key is currently held down.", { InputApiParam("key", "string") }, { "boolean" }), [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
         return key != KEY_NULL && IsKeyDown(key);
     });
 
-    input.set_function("IsKeyUp", [resolve](const std::string& name) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsKeyUp", "Check whether a keyboard key is currently up.", { InputApiParam("key", "string") }, { "boolean" }), [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
         return key != KEY_NULL && IsKeyUp(key);
     });
 
-    input.set_function("IsKeyPressed", [resolve](const std::string& name) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsKeyPressed", "Check whether a keyboard key was pressed this frame.", { InputApiParam("key", "string") }, { "boolean" }), [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
         if (key == KEY_NULL) return false;
         const auto& l = lua_input_detail::GetLatch();
         return l.enabled ? l.keyPressed[key] : IsKeyPressed(key);
     });
 
-    input.set_function("IsKeyReleased", [resolve](const std::string& name) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsKeyReleased", "Check whether a keyboard key was released this frame.", { InputApiParam("key", "string") }, { "boolean" }), [resolve](const std::string& name) -> bool {
         const int key = resolve(name);
         if (key == KEY_NULL) return false;
         const auto& l = lua_input_detail::GetLatch();
@@ -233,24 +255,28 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
 
     // --- mouse buttons -----------------------------------------------------
 
-    input.set_function("IsMouseDown", [resolveButton](sol::object button) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsMouseDown", "Check whether a mouse button is currently held down.", { InputApiParam("button", "string | integer") }, { "boolean" }), [resolveButton](sol::object button) -> bool {
         const int b = resolveButton(button);
         return b >= 0 && IsMouseButtonDown(b);
     });
 
-    input.set_function("IsMouseUp", [resolveButton](sol::object button) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsMouseUp", "Check whether a mouse button is currently up.", { InputApiParam("button", "string | integer") }, { "boolean" }), [resolveButton](sol::object button) -> bool {
         const int b = resolveButton(button);
         return b >= 0 && IsMouseButtonUp(b);
     });
 
-    input.set_function("IsMousePressed", [resolveButton](sol::object button) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsMousePressed", "Check whether a mouse button was pressed this frame.", { InputApiParam("button", "string | integer") }, { "boolean" }), [resolveButton](sol::object button) -> bool {
         const int b = resolveButton(button);
         if (b < 0) return false;
         const auto& l = lua_input_detail::GetLatch();
         return l.enabled ? l.mousePressed[b] : IsMouseButtonPressed(b);
     });
 
-    input.set_function("IsMouseReleased", [resolveButton](sol::object button) -> bool {
+    api.BindTableFunction(input, "input",
+        InputApiCall("IsMouseReleased", "Check whether a mouse button was released this frame.", { InputApiParam("button", "string | integer") }, { "boolean" }), [resolveButton](sol::object button) -> bool {
         const int b = resolveButton(button);
         if (b < 0) return false;
         const auto& l = lua_input_detail::GetLatch();
@@ -259,7 +285,8 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
 
     // --- mouse position, movement and wheel --------------------------------
 
-    input.set_function("GetMousePosition", [&lua]() -> sol::table {
+    api.BindTableFunction(input, "input",
+        InputApiCall("GetMousePosition", "Get the mouse position in window pixels as an x/y/z table.", {  }, { "{ x: number, y: number, z: number }" }), [&lua]() -> sol::table {
         const Vector2 p = GetMousePosition();
         sol::table t = lua.create_table();
         t["x"] = p.x;
@@ -268,7 +295,8 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
         return t;
     });
 
-    input.set_function("GetMouseWorldPosition", [&lua]() -> sol::table {
+    api.BindTableFunction(input, "input",
+        InputApiCall("GetMouseWorldPosition", "Get the mouse position in world units as an x/y/z table.", {  }, { "{ x: number, y: number, z: number }" }), [&lua]() -> sol::table {
         const Vector2 p = GetMousePosition();
         sol::table t = lua.create_table();
         t["x"] = p.x / kPixelsPerUnit;
@@ -277,10 +305,13 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
         return t;
     });
 
-    input.set_function("GetMouseX", []() -> float { return static_cast<float>(GetMouseX()); });
-    input.set_function("GetMouseY", []() -> float { return static_cast<float>(GetMouseY()); });
+    api.BindTableFunction(input, "input",
+        InputApiCall("GetMouseX", "Get the mouse X coordinate in window pixels.", {  }, { "number" }), []() -> float { return static_cast<float>(GetMouseX()); });
+    api.BindTableFunction(input, "input",
+        InputApiCall("GetMouseY", "Get the mouse Y coordinate in window pixels.", {  }, { "number" }), []() -> float { return static_cast<float>(GetMouseY()); });
 
-    input.set_function("GetMouseDelta", [&lua]() -> sol::table {
+    api.BindTableFunction(input, "input",
+        InputApiCall("GetMouseDelta", "Get mouse movement accumulated for the current script step.", {  }, { "{ x: number, y: number }" }), [&lua]() -> sol::table {
         const auto& l = lua_input_detail::GetLatch();
         const Vector2 d = l.enabled ? l.delta : GetMouseDelta();
         sol::table t = lua.create_table();
@@ -289,7 +320,8 @@ inline void BindLuaInput(sol::state& lua, ScriptLog& log) {
         return t;
     });
 
-    input.set_function("GetMouseWheel", []() -> float {
+    api.BindTableFunction(input, "input",
+        InputApiCall("GetMouseWheel", "Get the mouse-wheel movement for the current script step.", {  }, { "number" }), []() -> float {
         const auto& l = lua_input_detail::GetLatch();
         return l.enabled ? l.wheel : GetMouseWheelMove();
     });

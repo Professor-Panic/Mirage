@@ -15,7 +15,8 @@
 #include <raylib.h>
 
 #include "mirage_core/reflection.h"
-#include "mirage_core/lua_proxy.h"
+#include "mirage_core/lua_binding_backend.h"
+#include "mirage_core/lua_native.h"
 #include "mirage_core/entity_bus.h"
 #include "mirage_core/event_bus.h"
 
@@ -44,6 +45,17 @@ struct ScriptComponent
 
     bool Remove(const std::string& path) { return scripts.erase(path) != 0; }
 };
+
+inline ScriptApiCallable ScriptContextApiCall(std::string name, std::string description,
+                                               std::vector<ScriptApiParameter> parameters,
+                                               std::vector<std::string> returns)
+{
+    ScriptApiCallable call{ std::move(name), std::move(description),
+                            std::move(parameters), std::move(returns), false };
+    call.customBinding = true;
+    call.bindingNotes = "Implemented by Mirage's per-script context bridge; fields and component handles are resolved against the live entity/script instance.";
+    return call;
+}
 
 class ScriptSystem
 {
@@ -82,13 +94,61 @@ public:
         Reflection& reflection,
         entt::registry& registry,
         EntityBus& bus,
-        EventBus& events)
+        EventBus& events,
+        LuaBindingBackend& api)
         : lua_(lua),
           reflection_(reflection),
           registry_(registry),
           bus_(bus),
-          events_(events)
+          events_(events),
+          api_(api)
     {
+        api_.DescribeTable({ "ScriptContext", "The per-script context table passed to each script factory.", false, {} });
+        api_.DescribeTableFunction("ScriptContext", ScriptContextApiCall(
+            "GetComponent", "Get a live native handle to a script-exposed component, or nil",
+            { { "name", "string", false, false, {} } }, { "ComponentHandle | nil" }));
+        api_.DescribeTableFunction("ScriptContext", ScriptContextApiCall(
+            "expose", "Declare a persistent, inspector-visible script field",
+            { { "name", "string", false, false, {} }, { "value", "any", false, false, {} } }, { "any" }));
+        api_.DescribeTableFunction("ScriptContext", ScriptContextApiCall(
+            "GetEntity", "Return the EntityRef belonging to this script instance", {}, { "EntityRef" }));
+    }
+
+    // Called after the runtime has populated Reflection and before BindAll().
+    // The constructor runs before runtime.cpp registers its built-in components,
+    // so reflected literal-name overloads must be added in this later phase.
+    void DescribeReflectedApi()
+    {
+        // The same context functions are also installed as bare names in each
+        // script's isolated environment (see Load/InstallEnvironmentMeta).
+        // Describe those environment globals too, otherwise `_engine.lua`
+        // would document self:GetComponent() but leave GetComponent() and
+        // expose() looking undefined to LuaLS.
+        api_.DescribeGlobalFunction("GetComponent", ScriptContextApiCall(
+            "GetComponent", "Get a live native handle to a script-exposed component, or nil",
+            { { "name", "string", false, false, {} } }, { "ComponentHandle | nil" }));
+        api_.DescribeGlobalFunction("expose", ScriptContextApiCall(
+            "expose", "Declare a persistent, inspector-visible script field",
+            { { "name", "string", false, false, {} }, { "value", "any", false, false, {} } }, { "any" }));
+
+        for (const auto& [registeredName, component] : reflection_.All())
+        {
+            if (!component.scriptExposed)
+                continue;
+
+            const std::string scriptName = component.scriptName.empty()
+                ? registeredName : component.scriptName;
+            const std::string literalName = "\"" + scriptName + "\"";
+            const std::string description = "Get a live " + scriptName + " component handle, or nil";
+            api_.DescribeTableFunction("ScriptContext", ScriptContextApiCall(
+                "GetComponent", description,
+                { { "name", literalName, false, false, {} } },
+                { scriptName + " | nil" }));
+            api_.DescribeGlobalFunction("GetComponent", ScriptContextApiCall(
+                "GetComponent", description,
+                { { "name", literalName, false, false, {} } },
+                { scriptName + " | nil" }));
+        }
     }
 
     // Convert supported Lua values into the engine's reflected Value type.
@@ -167,6 +227,9 @@ public:
         }
 
         case sol::type::userdata:
+            if (value.is<LuaLiveValueHandle>())
+                return value.as<LuaLiveValueHandle>().Read();
+
             if (value.is<Vector2>()) return value.as<Vector2>();
             if (value.is<Vector3>()) return value.as<Vector3>();
             if (value.is<Vector4>()) return value.as<Vector4>();
@@ -198,8 +261,10 @@ public:
     {
         sol::table self = lua_.create_table();
 
-        self.set_function(
-            "GetComponent",
+        api_.BindTableFunction(
+            self, "ScriptContext",
+            ScriptContextApiCall("GetComponent", "Get a live native handle to a script-exposed component, or nil",
+                { { "name", "string", false, false, {} } }, { "ComponentHandle | nil" }),
             sol::overload(
                 [this, entity](
                     sol::table,
@@ -213,8 +278,10 @@ public:
                     return GetComponentFor(entity, name);
                 }));
 
-        self.set_function(
-            "expose",
+        api_.BindTableFunction(
+            self, "ScriptContext",
+            ScriptContextApiCall("expose", "Declare a persistent, inspector-visible script field",
+                { { "name", "string", false, false, {} }, { "value", "any", false, false, {} } }, { "any" }),
             sol::overload(
                 [this, entity, path](
                     sol::table,
@@ -231,8 +298,9 @@ public:
                 }));
 
         // self:GetEntity() -> EntityRef to this script's own entity.
-        self.set_function(
-            "GetEntity",
+        api_.BindTableFunction(
+            self, "ScriptContext",
+            ScriptContextApiCall("GetEntity", "Return the EntityRef belonging to this script instance", {}, { "EntityRef" }),
             sol::overload(
                 [this, entity](sol::table) { return bus_.Register(entity); },
                 [this, entity]() { return bus_.Register(entity); }));
@@ -240,8 +308,8 @@ public:
         // self.speed reads/writes exposed fields live (same lookup as bare names).
         sol::table meta = lua_.create_table();
 
-        meta.set_function(
-            "__index",
+        api_.BindInternalTableFunction(
+            meta, "__index",
             [this, entity, path](sol::table, sol::object key) -> sol::object
             {
                 if (key.is<std::string>())
@@ -251,8 +319,8 @@ public:
                 return sol::make_object(lua_, sol::lua_nil);
             });
 
-        meta.set_function(
-            "__newindex",
+        api_.BindInternalTableFunction(
+            meta, "__newindex",
             [this, entity, path](sol::table tbl, sol::object key, sol::object value)
             {
                 if (key.is<std::string>() &&
@@ -333,7 +401,7 @@ public:
         // This script's own Events: listeners it registers die with it.
         runtime.alive = std::make_shared<bool>(true);
         runtime.environment["Events"] =
-            MakeEventsTable(lua_, events_, true, runtime.alive);
+            MakeEventsTable(lua_, events_, true, runtime.alive, api_);
 
         // Exposed fields become live members of the script: the bare name
         // (speed) reads and writes this script's entry in
@@ -755,12 +823,12 @@ private:
         if (!registry_.valid(entity))
             return sol::make_object(lua_, sol::lua_nil);
 
-        const ComponentInfo* info = reflection_.Find(name);
+        const ComponentInfo* info = reflection_.FindScriptExposed(name);
 
-        if (!info)
+        if (!info || !info->scriptExposed)
         {
             std::cerr
-                << "GetComponent: unknown component '"
+                << "GetComponent: unknown or non-script-exposed component '"
                 << name
                 << "'\n";
 
@@ -773,10 +841,7 @@ private:
             return sol::make_object(lua_, sol::lua_nil);
         }
 
-        sol::table proxy =
-            CreateComponentProxy(lua_, registry_, entity, *info);
-
-        return sol::make_object(lua_, proxy);
+        return MakeLuaComponentHandle(lua_, registry_, entity, *info);
     }
 
     // ---- Exposed fields --------------------------------------------------
@@ -784,9 +849,9 @@ private:
     // Exposed fields live only in ScriptComponent::scripts[path]. Scripts reach
     // them through the environment (bare name) or self.<n>; neither keeps its
     // own copy, so Inspector edits are seen immediately and script writes show
-    // up in the Inspector. Vectors/colors are returned as live proxies, so even
-    // `local offset = offset_field` stays live. A local copy of a plain
-    // number/bool/string is still just a copy, exactly like in Unity.
+    // up in the Inspector. Vectors/colors are returned as native live-value
+    // userdata, so even `local offset = offset_field` stays live. A local copy
+    // of a plain number/bool/string is still just a copy, exactly like in Unity.
     //
     // Every script on an entity has its own field table, so two scripts can
     // both expose "speed" without touching each other.
@@ -810,47 +875,39 @@ private:
         return it == sc->scripts.end() ? nullptr : &it->second;
     }
 
-    template <class T>
-    sol::object ExposedProxy(
+    sol::object ExposedValueHandle(
         entt::entity entity,
         const std::string& path,
         const std::string& name)
     {
-        auto get = [this, entity, path, name]() -> T
+        auto get = [this, entity, path, name]() -> Value
         {
-            if (auto* fields = FieldsFor(entity, path))
-            {
-                auto it = fields->find(name);
+            auto* fields = FieldsFor(entity, path);
+            if (!fields)
+                throw std::runtime_error("Exposed field no longer exists: " + name);
 
-                if (it != fields->end())
-                    if (auto* v = std::get_if<T>(&it->second))
-                        return *v;
-            }
-
-            throw std::runtime_error(
-                "Exposed field no longer exists: " + name);
+            const auto it = fields->find(name);
+            if (it == fields->end())
+                throw std::runtime_error("Exposed field no longer exists: " + name);
+            return it->second;
         };
 
-        auto set = [this, entity, path, name](const T& value)
+        auto set = [this, entity, path, name](Value value)
         {
-            if (auto* fields = FieldsFor(entity, path))
-            {
-                auto it = fields->find(name);
+            auto* fields = FieldsFor(entity, path);
+            if (!fields)
+                throw std::runtime_error("Exposed field no longer exists: " + name);
 
-                if (it != fields->end())
-                {
-                    it->second = value;
-                    return;
-                }
-            }
-
-            throw std::runtime_error(
-                "Exposed field no longer exists: " + name);
+            const auto it = fields->find(name);
+            if (it == fields->end())
+                throw std::runtime_error("Exposed field no longer exists: " + name);
+            if (it->second.index() != value.index())
+                throw std::runtime_error("Exposed field type changed: " + name);
+            it->second = std::move(value);
         };
 
         return sol::make_object(
-            lua_,
-            CreateLiveValueProxy<T>(lua_, std::move(get), std::move(set)));
+            lua_, LuaLiveValueHandle{ std::move(get), std::move(set) });
     }
 
     sol::optional<sol::object> ReadExposed(
@@ -870,10 +927,11 @@ private:
 
         const Value& v = it->second;
 
-        if (std::holds_alternative<Vector2>(v)) return ExposedProxy<Vector2>(entity, path, name);
-        if (std::holds_alternative<Vector3>(v)) return ExposedProxy<Vector3>(entity, path, name);
-        if (std::holds_alternative<Vector4>(v)) return ExposedProxy<Vector4>(entity, path, name);
-        if (std::holds_alternative<Color>(v))   return ExposedProxy<Color>(entity, path, name);
+        if (std::holds_alternative<Vector2>(v) ||
+            std::holds_alternative<Vector3>(v) ||
+            std::holds_alternative<Vector4>(v) ||
+            std::holds_alternative<Color>(v))
+            return ExposedValueHandle(entity, path, name);
 
         return ValueToLua(lua_, v);
     }
@@ -922,8 +980,8 @@ private:
         sol::table vars = lua_.create_table();
         sol::table meta = lua_.create_table();
 
-        meta.set_function(
-            "__index",
+        api_.BindInternalTableFunction(
+            meta, "__index",
             [this, entity, path, vars](sol::table, sol::object key) -> sol::object
             {
                 if (key.is<std::string>())
@@ -939,8 +997,8 @@ private:
                 return lua_.globals().get<sol::object>(key);
             });
 
-        meta.set_function(
-            "__newindex",
+        api_.BindInternalTableFunction(
+            meta, "__newindex",
             [this, entity, path, vars](sol::table, sol::object key, sol::object value)
             {
                 if (key.is<std::string>() &&
@@ -1010,6 +1068,7 @@ private:
     entt::registry& registry_;
     EntityBus& bus_;
     EventBus& events_;
+    LuaBindingBackend& api_;
     std::function<void()> onFieldsChanged_;
 
     // (entity, script path) -> running script

@@ -7,8 +7,95 @@
 
 #include "mirage_core/entity_bus.h"
 #include "mirage_core/reflection.h"
-#include "mirage_core/lua_proxy.h"
+#include "mirage_core/lua_binding_backend.h"
+#include "mirage_core/lua_native.h"
 #include "mirage_core/script_system.h"   // ScriptComponent
+#include "mirage_core/components.h"        // TagsComponent
+
+inline ScriptApiParameter EntityApiParam(std::string name, std::string type,
+                                         bool optional = false, bool variadic = false)
+{
+    return { std::move(name), std::move(type), optional, variadic, {} };
+}
+
+inline ScriptApiCallable EntityApiCall(std::string name, std::string description,
+                                       std::vector<ScriptApiParameter> parameters,
+                                       std::vector<std::string> returns,
+                                       bool customBinding = false,
+                                       std::string bindingNotes = {})
+{
+    ScriptApiCallable call{ std::move(name), std::move(description),
+                            std::move(parameters), std::move(returns), false };
+    call.customBinding = customBinding;
+    call.bindingNotes = std::move(bindingNotes);
+    return call;
+}
+
+inline ScriptApiType EntityRefApiType(const Reflection& reflection)
+{
+    ScriptApiType type;
+    type.name = "EntityRef";
+    type.cppType = "EntityRef";
+    type.description = "Stable reference to an entity. A reference remains safe to hold after its entity is destroyed.";
+    type.ownership = "value";
+    type.lifetime = "EntityRef stores a stable UUID rather than an EnTT component pointer; IsValid checks whether it currently resolves.";
+    type.operators = { "==", "tostring" };
+    type.constructors.push_back(EntityApiCall("new", "Create an empty entity reference", {}, { "EntityRef" }));
+    auto add = [&](std::string name, std::string description,
+                   std::vector<ScriptApiParameter> parameters, std::vector<std::string> returns)
+    {
+        type.methods.push_back(EntityApiCall(std::move(name), std::move(description),
+                                             std::move(parameters), std::move(returns)));
+    };
+    add("IsNull", "Return whether this reference is empty", {}, { "boolean" });
+    add("IsValid", "Return whether the referenced entity currently exists", {}, { "boolean" });
+    add("GetId", "Return the entity UUID as a string", {}, { "string" });
+    add("GetName", "Return the entity name, or nil when it no longer exists", {}, { "string | nil" });
+    add("HasComponent", "Check whether the entity has a script-exposed component",
+        { EntityApiParam("name", "string") }, { "boolean" });
+    add("GetComponent", "Get a live native handle to a component, or nil",
+        { EntityApiParam("name", "string") }, { "ComponentHandle | nil" });
+    type.methods.back().customBinding = true;
+    type.methods.back().bindingNotes = "Resolves a stable EntityRef and creates a lifetime-checked EnTT component handle.";
+    // Literal-name overloads let LuaLS infer the concrete reflected component
+    // type for common calls such as ref:GetComponent("Transform").
+    for (const auto& [registeredName, component] : reflection.All())
+    {
+        if (!component.scriptExposed) continue;
+        const std::string scriptName = component.scriptName.empty() ? registeredName : component.scriptName;
+        type.methods.push_back(EntityApiCall("GetComponent",
+            "Get a live " + scriptName + " component handle, or nil",
+            { EntityApiParam("name", "\"" + scriptName + "\"") },
+            { scriptName + " | nil" }, true,
+            "Resolves the named reflected component and returns the generic native component-handle userdata."));
+    }
+    add("Destroy", "Destroy this entity", {}, { "boolean" });
+    add("AddComponent", "Add a script-exposed component using its reflected defaults",
+        { EntityApiParam("name", "string") }, { "boolean" });
+    add("RemoveComponent", "Remove a component from this entity",
+        { EntityApiParam("name", "string") }, { "boolean" });
+    add("AddTag", "Add a tag to this entity", { EntityApiParam("tag", "string") }, { "boolean" });
+    add("RemoveTag", "Remove a tag from this entity", { EntityApiParam("tag", "string") }, { "boolean" });
+    add("HasTag", "Check whether this entity has a tag", { EntityApiParam("tag", "string") }, { "boolean" });
+    add("GetTags", "Return the entity's tags as an array of strings", {}, { "string[]" });
+    add("SetScript", "Replace the entity's scripts with the specified script",
+        { EntityApiParam("path", "string") }, { "boolean" });
+    add("AddScript", "Attach another script to this entity",
+        { EntityApiParam("path", "string") }, { "boolean" });
+    add("RemoveScript", "Detach a script from this entity",
+        { EntityApiParam("path", "string") }, { "boolean" });
+    add("HasScript", "Check whether a script is attached",
+        { EntityApiParam("path", "string") }, { "boolean" });
+    add("GetScript", "Get the loaded script instance, optionally selecting a script path",
+        { EntityApiParam("path", "string", true) }, { "table | nil" });
+    add("Clone", "Clone this entity and its reflected component/script data", {}, { "EntityRef | nil" });
+    return type;
+}
+
+inline ScriptApiTable EntitiesApiTable()
+{
+    return { "Entities", "Functions for finding, creating, cloning and destroying entities.", false, {} };
+}
 
 // Registers the entity-reference API with Lua. Call once, before any script
 // runs (and before ScriptSystem is used).
@@ -21,7 +108,7 @@
 //   ref:GetId()                      uuid string ("" if empty)
 //   ref:GetName()                    name, or nil if the target is missing
 //   ref:HasComponent("Transform")    bool
-//   ref:GetComponent("Transform")    same live proxy as self:GetComponent, or nil
+//   ref:GetComponent("Transform")    native component handle, or nil
 //   ref == other                     compares uuids
 //
 //   ref:Destroy()                    destroys the entity; true if it existed
@@ -37,16 +124,28 @@
 //                                    has none or several scripts (pass the path),
 //                                    or it has not loaded yet
 //   ref:GetScript("scripts/a.lua")   the same for one named script
+//   ref:AddTag("boid")               add a tag (true if added; false if already there)
+//   ref:RemoveTag("boid")            true if it was there
+//   ref:HasTag("boid")               bool
+//   ref:GetTags()                    array of the entity's tags
 //   ref:Clone()                      copy of the entity (fields, script and
 //                                    exposed script fields); returns the new ref
 //
 //   Entities.Find("name")            EntityRef or nil
 //   Entities.FindAll("name")         array of EntityRef
+//   Entities.FindAll("name", { exclude = self })
+//                                    ...without the entity that is asking. `exclude`
+//                                    takes a script's `self` or an EntityRef.
+//   Entities.FindWithTag("boid")     every entity carrying the tag (array of EntityRef)
+//   Entities.FindWithTag("boid", { exclude = self })
+//                                    ...except the caller: a boid looking at the others
 //   Entities.FromId("uuid")          EntityRef or nil (if it doesn't resolve)
 //   Entities.Exists(ref)             bool
 //   Entities.Destroy(ref)            bool
 //   Entities.Create(["name"])        new entity with Transform and Game(name);
 //                                    returns its EntityRef
+//   Entities.Create("name", "boid")  ...and with that tag. Several tags: "boid, flock"
+//                                    or a table { "boid", "flock" }
 //   Entities.Clone(ref)              same as ref:Clone(); nil if ref is missing
 //
 // Spawning/destroying is safe inside Start/Update: a new entity's script is
@@ -55,11 +154,11 @@
 // valid values but resolve to "missing" (IsValid() == false).
 //
 // All of these fail soft (nil / false) for null, missing or destroyed targets.
-inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& reflection, ScriptSystem& scripts)
+inline void BindEntityLua(sol::state& lua, LuaBindingBackend& api, EntityBus& bus, const Reflection& reflection, ScriptSystem& scripts)
 {
     entt::registry& registry = bus.Registry();
 
-    // Resolves ref + component name to a live proxy; nil on any failure.
+    // Resolves ref + component name to a native component handle; nil on failure.
     auto getComponent = [&lua, &bus, &registry, &reflection](
         const EntityRef& ref, const std::string& name) -> sol::object
     {
@@ -67,21 +166,21 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
         if (e == entt::null)
             return sol::make_object(lua, sol::lua_nil);
 
-        const ComponentInfo* info = reflection.Find(name);
-        if (!info || !info->find(registry, e))
+        const ComponentInfo* info = reflection.FindScriptExposed(name);
+        if (!info || !info->scriptExposed || !info->find(registry, e))
             return sol::make_object(lua, sol::lua_nil);
 
-        return sol::make_object(lua, CreateComponentProxy(lua, registry, e, *info));
+        return MakeLuaComponentHandle(lua, registry, e, *info);
     };
 
     // Adds `name` to `e` using the reflected default constructor.
     auto addComponent = [&registry, &reflection](entt::entity e, const std::string& name)
     {
-        const ComponentInfo* info = reflection.Find(name);
+        const ComponentInfo* info = reflection.FindScriptExposed(name);
 
-        if (!info)
+        if (!info || !info->scriptExposed)
         {
-            std::cerr << "AddComponent: unknown component '" << name << "'\n";
+            std::cerr << "AddComponent: unknown or non-script-exposed component '" << name << "'\n";
             return false;
         }
         if (!info->add)
@@ -135,8 +234,56 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
         return bus.Register(copy);
     };
 
-    lua.new_usertype<EntityRef>(
-        "EntityRef",
+    // `{ exclude = self }` / `{ exclude = someRef }` -> the ref to leave out (null if none).
+    // `self` is a script's own table: it carries GetEntity(), so a script can
+    // leave itself out without looking up its own ref.
+    auto excludedRef = [](const sol::optional<sol::table>& options) -> EntityRef
+    {
+        if (!options)
+            return {};
+
+        sol::object exclude = (*options)["exclude"];
+        if (exclude.is<EntityRef>())
+            return exclude.as<EntityRef>();
+
+        if (exclude.get_type() == sol::type::table)
+        {
+            sol::table owner = exclude.as<sol::table>();
+            sol::object getEntity = owner["GetEntity"];
+            if (getEntity.get_type() == sol::type::function)
+            {
+                sol::protected_function_result result =
+                    getEntity.as<sol::protected_function>()(owner);
+                if (result.valid())
+                {
+                    sol::optional<EntityRef> ref = result.get<sol::optional<EntityRef>>();
+                    if (ref) return *ref;
+                }
+            }
+        }
+        return {};
+    };
+
+    // Adds tags given as "a, b" or { "a", "b" } (anything else is ignored).
+    auto applyTags = [&registry](entt::entity e, const sol::object& tags)
+    {
+        if (tags.get_type() == sol::type::string)
+        {
+            TagsComponent parsed;
+            parsed.tags = tags.as<std::string>();
+            for (const std::string& t : parsed.List())
+                registry.get_or_emplace<TagsComponent>(e).Add(t);
+        }
+        else if (tags.get_type() == sol::type::table)
+        {
+            for (const auto& entry : tags.as<sol::table>())
+                if (entry.second.get_type() == sol::type::string)
+                    registry.get_or_emplace<TagsComponent>(e).Add(entry.second.as<std::string>());
+        }
+    };
+
+    api.BindUserType<EntityRef>(
+        lua, EntityRefApiType(reflection),
         sol::constructors<EntityRef()>(),                 // EntityRef.new()
 
         // Makes the table itself callable: EntityRef()
@@ -157,8 +304,8 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             const EntityRef& r, const std::string& name)
         {
             entt::entity e = bus.Resolve(r);
-            const ComponentInfo* info = reflection.Find(name);
-            return e != entt::null && info && info->find(registry, e) != nullptr;
+            const ComponentInfo* info = reflection.FindScriptExposed(name);
+            return e != entt::null && info && info->scriptExposed && info->find(registry, e) != nullptr;
         },
 
         "GetComponent", getComponent,
@@ -175,12 +322,48 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             const EntityRef& r, const std::string& name)
         {
             entt::entity e = bus.Resolve(r);
-            const ComponentInfo* info = reflection.Find(name);
-            if (e == entt::null || !info || !info->find(registry, e))
+            const ComponentInfo* info = reflection.FindScriptExposed(name);
+            if (e == entt::null || !info || !info->scriptExposed || !info->find(registry, e))
                 return false;
 
             info->remove(registry, e);
             return true;
+        },
+
+        "AddTag", [&bus, &registry](const EntityRef& r, const std::string& tag)
+        {
+            entt::entity e = bus.Resolve(r);
+            return e != entt::null && registry.get_or_emplace<TagsComponent>(e).Add(tag);
+        },
+
+        "RemoveTag", [&bus, &registry](const EntityRef& r, const std::string& tag)
+        {
+            entt::entity e = bus.Resolve(r);
+            if (e == entt::null) return false;
+            auto* tags = registry.try_get<TagsComponent>(e);
+            return tags && tags->Remove(tag);
+        },
+
+        "HasTag", [&bus, &registry](const EntityRef& r, const std::string& tag)
+        {
+            entt::entity e = bus.Resolve(r);
+            if (e == entt::null) return false;
+            const auto* tags = registry.try_get<TagsComponent>(e);
+            return tags && tags->Has(tag);
+        },
+
+        "GetTags", [&lua, &bus, &registry](const EntityRef& r) -> sol::table
+        {
+            sol::table result = lua.create_table();
+            entt::entity e = bus.Resolve(r);
+            if (e == entt::null) return result;
+            if (const auto* tags = registry.try_get<TagsComponent>(e))
+            {
+                int i = 1;
+                for (const std::string& t : tags->List())
+                    result[i++] = t;
+            }
+            return result;
         },
 
         // Replaces every script on the entity with this one.
@@ -246,9 +429,11 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
         [](const EntityRef& r) { return r.IsNull() ? std::string("EntityRef(null)")
                                                    : "EntityRef(" + r.ToString() + ")"; });
 
-    sol::table entities = lua.create_named_table("Entities");
+    sol::table entities = api.CreateGlobalTable(lua, EntitiesApiTable());
 
-    entities.set_function("Find",
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("Find", "Find the first entity with the specified name",
+            { EntityApiParam("name", "string") }, { "EntityRef | nil" }),
         [&bus](const std::string& name) -> sol::optional<EntityRef>
         {
             EntityRef r = bus.FindByName(name);
@@ -256,19 +441,45 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             return r;
         });
 
-    entities.set_function("FindAll",
-        [&lua, &bus](const std::string& name)
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("FindAll", "Find all entities with the specified name",
+            { EntityApiParam("name", "string"), EntityApiParam("options", "table", true) }, { "EntityRef[]" }),
+        [&lua, &bus, excludedRef](const std::string& name, sol::optional<sol::table> options)
         {
+            const EntityRef skip = excludedRef(options);
             sol::table result = lua.create_table();
             int i = 1;
             for (const EntityRef& r : bus.FindAllByName(name))
-                result[i++] = r;
+                if (skip.IsNull() || !(r == skip))
+                    result[i++] = r;
+            return result;
+        });
+
+    // Entities.FindWithTag("boid")  /  Entities.FindWithTag("boid", { exclude = self })
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("FindWithTag", "Find all entities carrying a tag",
+            { EntityApiParam("tag", "string"), EntityApiParam("options", "table", true) }, { "EntityRef[]" }),
+        [&lua, &registry, excludedRef](const std::string& tag, sol::optional<sol::table> options)
+        {
+            const EntityRef skip = excludedRef(options);
+            sol::table result = lua.create_table();
+            int i = 1;
+            for (auto e : registry.view<IdComponent, TagsComponent>())
+            {
+                const EntityRef ref{ registry.get<IdComponent>(e).uuid };
+                if (!skip.IsNull() && ref == skip)
+                    continue;
+                if (registry.get<TagsComponent>(e).Has(tag))
+                    result[i++] = ref;
+            }
             return result;
         });
         // Entities.FindWithComponent("Sprite")              every entity that has it
     // Entities.FindWithComponent("Sprite", "Transform") ...that has ALL of these
     // Returns a table of EntityRefs (empty if none match or a name is unknown).
-    entities.set_function("FindWithComponent",
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("FindWithComponent", "Find entities carrying every named component",
+            { EntityApiParam("componentNames", "string", false, true) }, { "EntityRef[]" }),
         [&lua, &registry, &reflection](sol::variadic_args names) -> sol::table
         {
             std::vector<const ComponentInfo*> required;
@@ -276,7 +487,7 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             {
                 sol::optional<std::string> name = names.get<sol::optional<std::string>>(k);
                 const ComponentInfo* info = name ? reflection.Find(*name) : nullptr;
-                if (!info) return lua.create_table();        // unknown name: nothing can match
+                if (!info || !info->scriptExposed) return lua.create_table();        // unknown name: nothing can match
                 required.push_back(info);
             }
 
@@ -294,7 +505,9 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             }
             return result;
         });
-    entities.set_function("FromId",
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("FromId", "Resolve an entity UUID",
+            { EntityApiParam("uuid", "string") }, { "EntityRef | nil" }),
         [&bus](const std::string& id) -> sol::optional<EntityRef>
         {
             EntityRef r = EntityRef::FromString(id);
@@ -302,13 +515,19 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             return r;
         });
 
-    entities.set_function("Exists",
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("Exists", "Check whether an EntityRef currently resolves",
+            { EntityApiParam("ref", "EntityRef") }, { "boolean" }),
         [&bus](const EntityRef& r) { return bus.IsValid(r); });
 
-    entities.set_function("Destroy",
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("Destroy", "Destroy the referenced entity",
+            { EntityApiParam("ref", "EntityRef") }, { "boolean" }),
         [&bus](const EntityRef& r) { return bus.Destroy(r); });
 
-    entities.set_function("Clone", cloneEntity);
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("Clone", "Clone an entity and its reflected component/script data",
+            { EntityApiParam("ref", "EntityRef") }, { "EntityRef | nil" }), cloneEntity);
 
     // Entities.Create([name])
     auto create = [&bus, addComponent, &registry, &reflection](const std::string& name) -> EntityRef
@@ -328,8 +547,23 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
         return bus.Register(e);
     };
 
-    entities.set_function("Create",
+    api.DescribeTableFunction("Entities",
+        EntityApiCall("Create", "Create an entity with its default name", {}, { "EntityRef" }));
+    api.DescribeTableFunction("Entities",
+        EntityApiCall("Create", "Create an entity with a name and no tags",
+            { EntityApiParam("name", "string") }, { "EntityRef" }));
+    api.BindTableFunction(entities, "Entities",
+        EntityApiCall("Create", "Create an entity with a name and optional tags",
+            { EntityApiParam("name", "string"), EntityApiParam("tags", "string | string[]") }, { "EntityRef" }),
         sol::overload(
             create,
-            [create]() { return create("Entity"); }));
+            [create]() { return create("Entity"); },
+            // Entities.Create("boid", "boid, flock")  /  Entities.Create("boid", { "boid" })
+            [create, &bus, applyTags](const std::string& name, sol::object tags)
+            {
+                EntityRef ref = create(name);
+                entt::entity e = bus.Resolve(ref);
+                if (e != entt::null) applyTags(e, tags);
+                return ref;
+            }));
 }

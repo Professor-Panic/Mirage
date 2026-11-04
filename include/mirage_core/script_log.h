@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include <sol/sol.hpp>
+#include "mirage_core/lua_binding_backend.h"
 
 class ScriptLog {
 public:
@@ -35,8 +36,14 @@ private:
 
 // Replaces Lua's print(). Matches the original: args joined by tabs,
 // each run through tostring() so numbers, bools, nil and __tostring work.
-inline void BindLuaPrint(sol::state& lua, ScriptLog& log) {
-    lua.set_function("print", [&lua, &log](sol::variadic_args args) {
+inline void BindLuaPrint(sol::state& lua, ScriptLog& log, LuaBindingBackend& api) {
+    ScriptApiCallable description{
+        "print", "Write tab-separated values to the Mirage script log.",
+        { { "values", "any", true, true, {} } }, { "nil" }, false
+    };
+    description.customBinding = true;
+    description.bindingNotes = "Converts every argument with Lua tostring() and forwards the joined line to ScriptLog.";
+    api.BindGlobalFunction(lua, "print", std::move(description), [&lua, &log](sol::variadic_args args) {
         sol::function tostr = lua["tostring"];
         std::string line;
         bool first = true;
@@ -49,5 +56,5 @@ inline void BindLuaPrint(sol::state& lua, ScriptLog& log) {
         }
 
         log.Add(std::move(line));
-    });
+    }, true); // Intentionally replace Lua's base-library print with the Mirage script logger.
 }

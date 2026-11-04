@@ -31,6 +31,12 @@
 //   ref:RemoveComponent("Sprite")    true if it was there
 //   ref:SetScript("scripts/a.lua")   adds (or re-points) the Script component;
 //                                    it starts on the next update tick
+//   ref:GetScript()                  the table the entity's script returned (its
+//                                    public functions: Start, Update and anything
+//                                    else the script put in it); nil if the entity
+//                                    has none or several scripts (pass the path),
+//                                    or it has not loaded yet
+//   ref:GetScript("scripts/a.lua")   the same for one named script
 //   ref:Clone()                      copy of the entity (fields, script and
 //                                    exposed script fields); returns the new ref
 //
@@ -49,7 +55,7 @@
 // valid values but resolve to "missing" (IsValid() == false).
 //
 // All of these fail soft (nil / false) for null, missing or destroyed targets.
-inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& reflection)
+inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& reflection, ScriptSystem& scripts)
 {
     entt::registry& registry = bus.Registry();
 
@@ -219,6 +225,18 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
             return script && script->Has(path);
         },
 
+        // Calls on the result use a dot, not a colon: local function Foo(a) ... end
+        // is called as  other:GetScript().Foo(a).
+        "GetScript", [&lua, &bus, &scripts](
+            const EntityRef& r, sol::optional<std::string> path) -> sol::object
+        {
+            entt::entity e = bus.Resolve(r);
+            if (e == entt::null)
+                return sol::make_object(lua, sol::lua_nil);
+
+            return path ? scripts.GetInstance(e, *path) : scripts.GetInstance(e);
+        },
+
         "Clone", cloneEntity,
 
         sol::meta_function::equal_to,
@@ -247,7 +265,35 @@ inline void BindEntityLua(sol::state& lua, EntityBus& bus, const Reflection& ref
                 result[i++] = r;
             return result;
         });
+        // Entities.FindWithComponent("Sprite")              every entity that has it
+    // Entities.FindWithComponent("Sprite", "Transform") ...that has ALL of these
+    // Returns a table of EntityRefs (empty if none match or a name is unknown).
+    entities.set_function("FindWithComponent",
+        [&lua, &registry, &reflection](sol::variadic_args names) -> sol::table
+        {
+            std::vector<const ComponentInfo*> required;
+            for (std::size_t k = 0; k < names.size(); ++k)
+            {
+                sol::optional<std::string> name = names.get<sol::optional<std::string>>(k);
+                const ComponentInfo* info = name ? reflection.Find(*name) : nullptr;
+                if (!info) return lua.create_table();        // unknown name: nothing can match
+                required.push_back(info);
+            }
 
+            sol::table result = lua.create_table();
+            if (required.empty()) return result;
+
+            int i = 1;
+            for (auto e : registry.view<IdComponent>())      // same set Find/FindAll search
+            {
+                bool all = true;
+                for (const ComponentInfo* info : required)
+                    if (!info->find(registry, e)) { all = false; break; }
+
+                if (all) result[i++] = EntityRef{ registry.get<IdComponent>(e).uuid };
+            }
+            return result;
+        });
     entities.set_function("FromId",
         [&bus](const std::string& id) -> sol::optional<EntityRef>
         {

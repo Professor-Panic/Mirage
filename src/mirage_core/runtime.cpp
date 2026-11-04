@@ -6,7 +6,7 @@
 #include "mirage_core/lua_functions.h"
 MirageCoreRuntime::MirageCoreRuntime():
     entityBus(registry),
-    scriptSystem(lua, reflection, registry, entityBus)
+    scriptSystem(lua, reflection, registry, entityBus, events)
 {
     lua.open_libraries(
         sol::lib::base,
@@ -50,10 +50,11 @@ MirageCoreRuntime::MirageCoreRuntime():
         });
 
     // Registers EntityRef and the Entities table with Lua. Must run before scripts.
-    BindEntityLua(lua, entityBus, reflection);
+    BindEntityLua(lua, entityBus, reflection, scriptSystem);
     BindLuaUserTypes(lua);      // Vector2/3/4, Color: the Value alternatives Lua has no type for
     BindLuaFunctions(lua);      // math.clamp / lerp / sign / round (after open_libraries)
+    lua["Events"] = MakeEventsTable(lua, events, false, {});   // for code outside any script; scripts get their own
     BindLuaPrint(lua, scriptLog);
     BindLuaInput(lua,scriptLog);
 }
-MirageCoreRuntime::~MirageCoreRuntime() { scriptSystem.UnloadAll(); }
+MirageCoreRuntime::~MirageCoreRuntime() { scriptSystem.UnloadAll(); events.Clear(); }

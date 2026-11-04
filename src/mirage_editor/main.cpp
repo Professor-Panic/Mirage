@@ -21,7 +21,10 @@ int main()
     // ---------------------------------------------------------
     // Engine
     // ---------------------------------------------------------
-    InitWindow(1600, 900, "Scriptable Objects");
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(1920, 1080, "Scriptable Objects");
+    SetWindowPosition(0,0);
+    MaximizeWindow();
     SetTargetFPS(60);
 
     rui::Context ui;
@@ -102,7 +105,9 @@ int main()
         play.Update();                      // player messages, Edit <-> Play
         core.scriptSystem.EnsureLoaded();
         console.Update();
-
+        if(IsKeyPressed(KEY_F11)){
+            ToggleFullscreen();
+        }
         // Refresh inspector data after scripts have run.
         inspector.Update();
         fileDialog.Update();

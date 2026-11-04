@@ -17,6 +17,7 @@
 #include "mirage_core/reflection.h"
 #include "mirage_core/lua_proxy.h"
 #include "mirage_core/entity_bus.h"
+#include "mirage_core/event_bus.h"
 
 // A list of scripts on one entity. The map key is the script's path; the value
 // holds that script's exposed fields, so two scripts never share (or fight over)
@@ -66,6 +67,11 @@ private:
         sol::protected_function start;
         sol::protected_function update;
 
+        // Lives exactly as long as this runtime. Events listeners registered by this
+        // script hold a weak_ptr to it, so they stop being called the moment the
+        // runtime is destroyed (unload, reload, entity destroyed).
+        std::shared_ptr<bool> alive;
+
         bool started = false;
         bool updateDisabled = false;
     };
@@ -75,11 +81,13 @@ public:
         sol::state& lua,
         Reflection& reflection,
         entt::registry& registry,
-        EntityBus& bus)
+        EntityBus& bus,
+        EventBus& events)
         : lua_(lua),
           reflection_(reflection),
           registry_(registry),
-          bus_(bus)
+          bus_(bus),
+          events_(events)
     {
     }
 
@@ -322,6 +330,11 @@ public:
         runtime.environment["GetComponent"] =
             runtime.self["GetComponent"];
 
+        // This script's own Events: listeners it registers die with it.
+        runtime.alive = std::make_shared<bool>(true);
+        runtime.environment["Events"] =
+            MakeEventsTable(lua_, events_, true, runtime.alive);
+
         // Exposed fields become live members of the script: the bare name
         // (speed) reads and writes this script's entry in
         // ScriptComponent::scripts directly.
@@ -543,6 +556,9 @@ public:
         }
 
         RemoveStaleRuntimes();
+
+        // Events.Post()ed this tick are delivered once every script has run.
+        events_.Flush();
     }
 
     // Edit mode: run every script's factory (so expose() registers its
@@ -573,8 +589,35 @@ public:
     void ReloadAll()
     {
         scripts_.clear();
+        events_.Clear();                // nothing from the previous run may fire or stay queued
         failed_.clear();
         EnsureLoaded();
+    }
+
+    // The script's PUBLIC interface: the table its factory returned, so whatever
+    // the author put in `return { Start = ..., Update = ..., Foo = Foo }` is
+    // reachable (locals that are not in that table never are). nil if the entity
+    // or that script does not exist, or its runtime has not loaded yet (a script
+    // added this tick loads on the next one). The table is replaced when the
+    // script is reloaded, so do not keep it across frames.
+    sol::object GetInstance(entt::entity entity, const std::string& path)
+    {
+        const auto it = scripts_.find(ScriptKey{entity, path});
+        if (it == scripts_.end() || !it->second.instance.valid())
+            return sol::make_object(lua_, sol::lua_nil);
+
+        return sol::make_object(lua_, it->second.instance);
+    }
+
+    // Same, for an entity that has exactly one script. With none or several
+    // attached it is ambiguous, so it returns nil: pass the path then.
+    sol::object GetInstance(entt::entity entity)
+    {
+        const auto* component = registry_.try_get<ScriptComponent>(entity);
+        if (!component || component->scripts.size() != 1)
+            return sol::make_object(lua_, sol::lua_nil);
+
+        return GetInstance(entity, component->scripts.begin()->first);
     }
 
     // Drop every runtime that belongs to `entity`.
@@ -594,6 +637,7 @@ public:
     void UnloadAll()
     {
         scripts_.clear();
+        events_.Clear();
         failed_.clear();
     }
 
@@ -965,6 +1009,7 @@ private:
     Reflection& reflection_;
     entt::registry& registry_;
     EntityBus& bus_;
+    EventBus& events_;
     std::function<void()> onFieldsChanged_;
 
     // (entity, script path) -> running script

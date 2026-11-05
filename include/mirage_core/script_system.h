@@ -1,9 +1,16 @@
 #pragma once
 
+#include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
+#include <optional>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -160,10 +167,25 @@ public:
             return value.as<bool>();
 
         case sol::type::number:
+        {
+            const double number = value.as<double>();
+
+#if LUA_VERSION_NUM >= 503
+            // Lua 5.3+ has a separate integer subtype: 2.5 and 5.0 are floats.
             if (value.is<int>())
                 return value.as<int>();
-
-            return value.as<float>();
+            return static_cast<float>(number);
+#else
+            // LuaJIT / Lua 5.1 / 5.2 have ONE number type, so sol2's is<int>()
+            // is true for every number (2.5 would silently become 2). Here a
+            // number is an int only if it is a whole number that fits in one.
+            if (std::isfinite(number) && number == std::floor(number) &&
+                number >= static_cast<double>(std::numeric_limits<int>::min()) &&
+                number <= static_cast<double>(std::numeric_limits<int>::max()))
+                return static_cast<int>(number);
+            return static_cast<float>(number);
+#endif
+        }
 
         case sol::type::string:
             return value.as<std::string>();
@@ -384,6 +406,16 @@ public:
             return false;
         }
 
+        // Record which names this load's factory exposes (see PruneExposed).
+        // Only the factory run counts: expose() from Start() happens later.
+        exposedNames_[ScriptKey{entity, path}].clear();
+        loadingKey_ = ScriptKey{entity, path};
+        struct LoadingGuard
+        {
+            std::optional<ScriptKey>& slot;
+            ~LoadingGuard() { slot.reset(); }
+        } loadingGuard{ loadingKey_ };
+
         RuntimeScript runtime;
         runtime.loadedPath = path;
 
@@ -407,6 +439,10 @@ public:
         // (speed) reads and writes this script's entry in
         // ScriptComponent::scripts directly.
         InstallEnvironmentMeta(runtime.environment, entity, path);
+
+#if LUA_VERSION_NUM < 503
+        floatLiterals_[path] = FindFloatExposeNames(path);
+#endif
 
         // Execute the chunk. The chunk must return a factory function.
         // script_pass_on_error: a missing file or a syntax error comes back as
@@ -634,20 +670,78 @@ public:
     // Cheap to call every frame: it only loads scripts that have no runtime
     // yet, and a script that failed to load is not retried until ReloadAll()
     // is called (or it is removed and added again).
+    //
+    // Hot reload: once a second, every .lua file used by a Script component is
+    // hashed (its contents, not its timestamp). If the hash differs from the one
+    // the running copy was loaded from, that script is reloaded, so a new
+    // expose() line shows up in the Inspector without detaching and re-attaching
+    // the script. A script that failed to load is retried once its file changes.
     void EnsureLoaded()
     {
         const std::vector<ScriptKey> keys = CollectScriptKeys();
+
+        const auto now = std::chrono::steady_clock::now();
+        const bool checkFiles = now >= nextFileCheck_;
+        if (checkFiles)
+            nextFileCheck_ = now + std::chrono::seconds(1);
+
+        // Each distinct file is read and hashed once per check, however many
+        // entities use it.
+        std::map<std::string, std::optional<std::uint64_t>> currentHashes;
+        bool reloaded = false;
 
         for (const ScriptKey& key : keys)
         {
             if (!ScriptExists(key))
                 continue;
 
+            // Names the previous copy exposed, set only when this key is reloaded
+            // because its file changed.
+            std::optional<std::set<std::string>> previousNames;
+
+            if (checkFiles)
+            {
+                const auto known = hashes_.find(key);
+                if (known != hashes_.end())
+                {
+                    auto cached = currentHashes.find(key.second);
+                    if (cached == currentHashes.end())
+                        cached = currentHashes.emplace(key.second, FileHash(key.second)).first;
+
+                    // An unreadable or missing file keeps the running copy;
+                    // only a real content change reloads.
+                    if (cached->second && *cached->second != known->second)
+                    {
+                        const auto names = exposedNames_.find(key);
+                        if (names != exposedNames_.end())
+                            previousNames = std::move(names->second);
+                        scripts_.erase(key);
+                        failed_.erase(key);
+                        hashes_.erase(key);
+                        exposedNames_.erase(key);
+                        reloaded = true;
+                    }
+                }
+            }
+
             if (scripts_.find(key) == scripts_.end())
-                TryLoad(key.first, key.second);
+            {
+                const bool loaded = TryLoad(key.first, key.second);
+
+                // The new version loaded: fields the old version exposed that the
+                // new one no longer does are gone from the Inspector too. A
+                // failed load (e.g. a syntax error mid-edit) keeps everything.
+                if (loaded && previousNames)
+                    PruneExposed(key, *previousNames);
+            }
         }
 
         RemoveStaleRuntimes();
+
+        // The set of exposed fields may have changed even if no single expose()
+        // reported a change (a field removed, a type or order changed).
+        if (reloaded && onFieldsChanged_)
+            onFieldsChanged_();
     }
 
     // Throw away every runtime and load them all again, fresh and not yet
@@ -659,6 +753,8 @@ public:
         scripts_.clear();
         events_.Clear();                // nothing from the previous run may fire or stay queued
         failed_.clear();
+        hashes_.clear();
+        exposedNames_.clear();
         EnsureLoaded();
     }
 
@@ -693,6 +789,8 @@ public:
     {
         EraseEntity(scripts_, entity);
         EraseEntity(failed_, entity);
+        EraseEntity(hashes_, entity);
+        EraseEntity(exposedNames_, entity);
     }
 
     // Drop one script's runtime.
@@ -700,6 +798,8 @@ public:
     {
         scripts_.erase(ScriptKey{entity, path});
         failed_.erase(ScriptKey{entity, path});
+        hashes_.erase(ScriptKey{entity, path});
+        exposedNames_.erase(ScriptKey{entity, path});
     }
 
     void UnloadAll()
@@ -707,6 +807,8 @@ public:
         scripts_.clear();
         events_.Clear();
         failed_.clear();
+        hashes_.clear();
+        exposedNames_.clear();
     }
 
     // Called when a script exposes a new field (or changes a field's type),
@@ -740,7 +842,8 @@ private:
         return sc && sc->Has(key.second);
     }
 
-    static void EraseEntity(std::map<ScriptKey, RuntimeScript>& container, entt::entity entity)
+    template <class Mapped>
+    static void EraseEntity(std::map<ScriptKey, Mapped>& container, entt::entity entity)
     {
         for (auto it = container.begin(); it != container.end();)
         {
@@ -771,6 +874,10 @@ private:
         if (failed_.count(key))
             return false;
 
+        // Remember the file's content hash BEFORE loading it, so a save that lands
+        // while the script loads still triggers another reload (see EnsureLoaded).
+        RecordHash(key);
+
         bool ok = false;
 
         try
@@ -793,10 +900,105 @@ private:
         return false;
     }
 
+#if LUA_VERSION_NUM < 503
+    // Names passed to expose() with a float literal (5.0, 5., .5, 1e3). Only
+    // used on LuaJIT / Lua 5.1, where 5.0 and 5 are the same number at run time.
+    // It is a source scan, so it only sees literal arguments:
+    //   expose("speed", 5.0)   -> float
+    //   expose("speed", 2 * 2.0)  -> still an int (4); write 4.0 instead
+    static std::set<std::string> FindFloatExposeNames(const std::string& path)
+    {
+        std::set<std::string> names;
+
+        std::ifstream file(path, std::ios::binary);
+        if (!file)
+            return names;     // a missing file is reported by the load itself
+
+        const std::string source((std::istreambuf_iterator<char>(file)),
+                                 std::istreambuf_iterator<char>());
+
+        static const std::regex pattern(
+            R"re(\bexpose\s*\(\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\1\s*,\s*[+-]?(?:\d+\.\d*|\.\d+|\d+[eE][+-]?\d+))re");
+
+        for (std::sregex_iterator it(source.begin(), source.end(), pattern), end;
+             it != end; ++it)
+            names.insert((*it)[2].str());
+
+        return names;
+    }
+#endif
+
+    // Remove stored fields that `previous` (the old copy's expose() names) had
+    // and the freshly loaded copy did not expose. Fields that were never exposed
+    // by a factory run in this session (loaded from a scene, or exposed from
+    // Start()) are not touched.
+    void PruneExposed(const ScriptKey& key, const std::set<std::string>& previous)
+    {
+        auto* component = registry_.try_get<ScriptComponent>(key.first);
+        if (!component)
+            return;
+
+        const auto fields = component->scripts.find(key.second);
+        if (fields == component->scripts.end())
+            return;
+
+        const auto current = exposedNames_.find(key);
+        for (const std::string& name : previous)
+        {
+            const bool stillExposed =
+                current != exposedNames_.end() && current->second.count(name) != 0;
+            if (!stillExposed)
+                fields->second.erase(name);
+        }
+    }
+
+    // 64-bit FNV-1a of the file's bytes; nullopt if it cannot be read.
+    static std::optional<std::uint64_t> FileHash(const std::string& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        if (!file)
+            return std::nullopt;
+
+        std::uint64_t hash = 14695981039346656037ull;
+        char buffer[4096];
+        while (file.read(buffer, sizeof buffer) || file.gcount() > 0)
+        {
+            const std::streamsize count = file.gcount();
+            for (std::streamsize i = 0; i < count; ++i)
+            {
+                hash ^= static_cast<unsigned char>(buffer[i]);
+                hash *= 1099511628211ull;
+            }
+        }
+        return hash;
+    }
+
+    void RecordHash(const ScriptKey& key)
+    {
+        if (const auto hash = FileHash(key.second))
+            hashes_[key] = *hash;
+    }
+
     // Remove runtimes for deleted entities, removed script components, or
     // scripts that were detached from their entity.
     void RemoveStaleRuntimes()
     {
+        for (auto it = hashes_.begin(); it != hashes_.end();)
+        {
+            if (!ScriptExists(it->first))
+                it = hashes_.erase(it);
+            else
+                ++it;
+        }
+
+        for (auto it = exposedNames_.begin(); it != exposedNames_.end();)
+        {
+            if (!ScriptExists(it->first))
+                it = exposedNames_.erase(it);
+            else
+                ++it;
+        }
+
         for (auto it = scripts_.begin(); it != scripts_.end();)
         {
             if (!ScriptExists(it->first))
@@ -1033,10 +1235,36 @@ private:
 
             Value incoming = LuaToValue(value);
 
+            if (loadingKey_ && loadingKey_->first == entity && loadingKey_->second == path)
+                exposedNames_[*loadingKey_].insert(name);
+
+#if LUA_VERSION_NUM < 503
+            // expose("speed", 5.0): LuaJIT hands us 5, so use what the source said.
+            if (std::holds_alternative<int>(incoming))
+            {
+                const auto hints = floatLiterals_.find(path);
+                if (hints != floatLiterals_.end() && hints->second.count(name))
+                    incoming = static_cast<float>(std::get<int>(incoming));
+            }
+#endif
+
             auto [it, inserted] = fields->try_emplace(name, incoming);
             bool changed = inserted;
 
-            if (!inserted && it->second.index() != incoming.index())
+#if LUA_VERSION_NUM < 503
+            // Without an integer subtype a whole-number default (expose("speed", 5))
+            // cannot be told from a float one, so a stored float (from the
+            // Inspector or a scene file) must not be replaced by that int.
+            const bool wholeNumberForFloat =
+                !inserted &&
+                std::holds_alternative<float>(it->second) &&
+                std::holds_alternative<int>(incoming);
+#else
+            const bool wholeNumberForFloat = false;
+#endif
+
+            if (!inserted && !wholeNumberForFloat &&
+                it->second.index() != incoming.index())
             {
                 it->second = incoming;
                 changed = true;
@@ -1070,6 +1298,22 @@ private:
     EventBus& events_;
     LuaBindingBackend& api_;
     std::function<void()> onFieldsChanged_;
+
+    // Content hash of the file each (entity, script) pair was loaded from;
+    // EnsureLoaded() reloads the script when the file's hash no longer matches.
+    std::map<ScriptKey, std::uint64_t> hashes_;
+
+    // Names each script's factory exposed on its last load, and the script
+    // currently inside its factory (so expose() knows whether to record).
+    std::map<ScriptKey, std::set<std::string>> exposedNames_;
+    std::optional<ScriptKey> loadingKey_;
+    std::chrono::steady_clock::time_point nextFileCheck_{};
+
+#if LUA_VERSION_NUM < 503
+    // Names exposed with a float literal (expose("speed", 5.0)), per script file.
+    // LuaJIT cannot tell 5.0 from 5 at run time, so the source is scanned.
+    std::map<std::string, std::set<std::string>> floatLiterals_;
+#endif
 
     // (entity, script path) -> running script
     std::map<ScriptKey, RuntimeScript> scripts_;

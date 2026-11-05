@@ -77,5 +77,4 @@ add_custom_target(run-player
     WORKING_DIRECTORY ${MIRAGE_ROOT}
     USES_TERMINAL
 )
-
 message(STATUS "Player sources: ${PLAYER_SRC}")

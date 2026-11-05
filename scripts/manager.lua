@@ -20,7 +20,6 @@ return function(self)
     expose("SeparationWeight", 1.5)
     expose("AlignmentWeight", 0.5)
     expose("CohesionWeight", 1.0)
-
     local transforms = {}            -- engine handles: written once per frame, never read
     local px, py = {}, {}            -- position
     local ang = {}                   -- heading angle in radians (speed is constant)

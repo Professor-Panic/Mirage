@@ -6,12 +6,12 @@ set(RAYLIB_DIR         "C:/raylib/raylib")
 set(RAYLIB_INCLUDE_DIR "${RAYLIB_DIR}/src")
 set(RAYLIB_LIBRARY     "${RAYLIB_DIR}/src/libraylib.a")
 
-set(LUA_DIR            "C:/lua-5.4.8")
+set(LUA_DIR            "C:/luaJIT")
 set(LUA_INCLUDE_DIR    "${LUA_DIR}/src")
-set(LUA_LIBRARY        "${LUA_DIR}/src/liblua.a")
+set(LUA_LIBRARY        "${LUA_DIR}/src/libluajit.a")
 
 foreach(f "${RAYLIB_INCLUDE_DIR}/raylib.h" "${RAYLIB_LIBRARY}"
-          "${LUA_INCLUDE_DIR}/lua.h"       "${LUA_LIBRARY}")
+          "${LUA_INCLUDE_DIR}/lua.h" "${LUA_INCLUDE_DIR}/luajit.h" "${LUA_LIBRARY}")
     if(NOT EXISTS "${f}")
         message(FATAL_ERROR "Required file not found:\n  ${f}")
     endif()

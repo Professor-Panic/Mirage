@@ -29,36 +29,36 @@
         {
           "fields": {
             "AlignmentWeight": {
-              "type": "Int",
-              "value": 1
+              "type": "Float",
+              "value": 1.5
             },
             "BoidVelocity": {
               "type": "Int",
-              "value": 5
+              "value": 10
             },
             "CohesionWeight": {
-              "type": "Int",
-              "value": 1
+              "type": "Float",
+              "value": 0.5
             },
             "ConeAngle": {
               "type": "Int",
-              "value": 270
+              "value": 120
             },
             "NumBoids": {
               "type": "Int",
-              "value": 300
+              "value": 250
             },
             "SeparationWeight": {
-              "type": "Int",
-              "value": 1
+              "type": "Float",
+              "value": 0.5
             },
             "SightRadius": {
-              "type": "Int",
-              "value": 3
+              "type": "Float",
+              "value": 2.5
             },
             "TurnSpeed": {
               "type": "Int",
-              "value": 120
+              "value": 180
             }
           },
           "path": "scripts/manager.lua"

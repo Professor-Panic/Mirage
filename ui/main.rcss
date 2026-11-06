@@ -1,34 +1,58 @@
+/* ==================================================================
+   Mirage editor theme: blue / dark grey
+
+   Palette (all literal rgb() so nothing depends on variable support):
+     deepest   rgb(22, 26, 34)    viewport, console output, text inputs
+     panel     rgb(32, 38, 50)    hierarchy, inspector, console, menus
+     raised    rgb(42, 50, 66)    toolbar, dropdowns, dialog
+     header    rgb(54, 66, 90)    component headers
+     group     rgb(44, 55, 74)    field-group headers
+     hover     rgb(62, 80, 112)   hovered rows / buttons
+     border    rgb(68, 82, 108)
+     text      rgb(222, 228, 238)
+     muted     rgb(150, 162, 182)
+     accent    rgb(88, 140, 224)  drag-over, scrollbar thumb, focus
+   ================================================================== */
+
+:root{
+    --font-main:"Inter-Regular"
+}
+
 /* ------------------------------------------------------------------ */
 /* Hierarchy                                                          */
 /* ------------------------------------------------------------------ */
 
 .objects {
-    color: white;
+    color: rgb(222, 228, 238);
 }
 
 .hierachy {
-    background-color: white;
+    background-color: rgb(32, 38, 50);
     position: absolute;
-    top: 10%;
+    top: 7%;                    /* below the 3% menu bar + 4% toolbar */
     width: 15%;
-    border-radius: 10px;
-    border-width: 4px;
+    border-radius: 0px;
+    border-width: 1px;
+    border-color: rgb(68, 82, 108);
     font-family: var(--font-main);
-    padding: 8px;
-    height: 60%;                /* same band as the inspector: ends where the console starts */
+    padding: 6px;
+    height: 63%;                /* same band as the inspector: ends where the console starts (70%) */
     overflow: auto;
 }
 
+/* The entity names are StringInputs: they draw their own box, so they need a
+   dark background too (white text on the default white box was unreadable). */
 .class-inspector-names {
     border-color: transparent;
     border-width: 0px;
     show-value-box: false;
-    color: black;
+    color: rgb(222, 228, 238);
+    background-color: rgb(32, 38, 50);
 }
 
 .class-inspector-names:hover {
-    background-color: rgb(192, 181, 181);
-    color: black;
+    background-color: rgb(62, 80, 112);
+    color: rgb(255, 255, 255);
 }
 
 /* The hierarchy entry currently being dragged */
@@ -40,34 +64,31 @@
 /* ------------------------------------------------------------------ */
 /* Inspector                                                          */
 /* ------------------------------------------------------------------ */
-:root{
-    --font-main:"Inter-Regular"
-}
 .inspector {
-    background-color: white;
+    background-color: rgb(32, 38, 50);
     position: absolute;
-    top: 10%;
+    top: 7%;                    /* below the 3% menu bar + 4% toolbar */
     left: 80%;
     width: 20%;
-    height: 60%;                /* explicit height; ends where the console starts (70%) */
+    height: 63%;                /* explicit height; ends where the console starts (70%) */
     overflow: auto;             /* scroll when the fields are taller than the panel */
     scrollbar-size: 10px;
     scroll-speed: 30;
     font-family: var(--font-main);
     font-size: 14;
-    color: black;
+    color: rgb(222, 228, 238);
     padding: 8px;
     padding-right: 20px;        /* keeps the fields clear of the scrollbar */
-    border-radius: 10px;
+    border-radius: 0px;
     gap: 10px;
 }
 
 .inspector::scrollbar {
-    background-color: rgb(210, 210, 210);     /* track */
+    background-color: rgb(22, 26, 34);        /* track */
 }
 
 .inspector::scrollbar-thumb {
-    background-color: rgb(120, 120, 130);     /* the draggable part */
+    background-color: rgb(88, 140, 224);      /* the draggable part */
 }
 .inspector-row {
     display: flex;
@@ -78,9 +99,9 @@
 
 .inspector-label {
     display: block;        /* inline labels ignore width */
-    width: 50px;          /* pick one width wide enough for your longest name */
+    width: 100px;          /* pick one width wide enough for your longest name */
     flex-shrink: 0;        /* don't let the row squeeze it */
-    color: black;
+    color: rgb(170, 182, 202);
 }
 
 .class-inspector-field {
@@ -89,31 +110,50 @@
     flex-shrink: 1;
     flex-grow: 1;
     overflow: hidden;
+    color: rgb(240, 244, 250);
+    background-color: rgb(22, 26, 34);      /* the value boxes were still default white */
 }
-/* Component heading ("Transform", "Game", "Script") */
+/* Collapsible headers: components ("Transform", "Game", ...) and field groups ("Velocity") */
+.inspector-header {
+    width: 100%;
+    text-align: left;
+    color: rgb(240, 244, 250);
+    flex-shrink: 0;
+}
 .inspector-component {
     margin-top: 8px;
-    font-size: 18px;
-    color: black;
+    font-size: 16px;
+    background-color: rgb(54, 66, 90);
 }
+.inspector-group {
+    font-size: 14px;
+    background-color: rgb(44, 55, 74);
+}
+
+/* Indentation by nesting depth: component fields = 1, group fields = 2, ... */
+.inspector-depth-0 { margin-left: 0px; }
+.inspector-depth-1 { margin-left: 10px; }
+.inspector-depth-2 { margin-left: 20px; }
+.inspector-depth-3 { margin-left: 30px; }
+.inspector-depth-4 { margin-left: 40px; }
 /* ------------------------------------------------------------------ */
 /* Entity reference fields (drop a hierarchy entry onto the row)      */
 /* ------------------------------------------------------------------ */
 
 /* Slightly different tint so ref rows read as "drop here" */
 .inspector-ref {
-    background-color: rgb(225, 240, 225);
+    background-color: rgb(36, 58, 82);
 }
 
 /* A hierarchy entry is being held over this row and it accepts it */
 .inspector-ref:drag-over {
-    background-color: rgb(120, 170, 235);
+    background-color: rgb(70, 120, 200);
 }
 
 /* Target name ("None" / "Missing" / entity name) fills the space */
 .inspector-ref-name {
     flex-grow: 1;
-    color: black;
+    color: rgb(222, 228, 238);
 }
 
 .inspector-ref-clear {
@@ -124,34 +164,53 @@
 /* Play / Edit toolbar                                                */
 /* ------------------------------------------------------------------ */
 
-/* Full-width, transparent strips that centre the real bar at any window size. */
+/* Two full-width bars: menu 0% - 3%, toolbar 3% - 7%, panels start at 7%.
+   They are clearly different shades (menu = darkest, toolbar = mid) with a thin
+   border line between them, so you can see where one ends and the next begins.
+   NOTE: kPanelsTop in editor_menus.h must be 0.07f to match. */
 .top-strip {
     position: absolute;
     left: 0;
     width: 100%;
+    height: 4%;
+    background-color: rgb(40, 49, 66);
+    border-width: 1px;
+    border-color: rgb(68, 82, 108);
     flex-direction: row;
+    align-items: center;
     justify-content: center;
 }
-.menu-strip    { top: 0%; }
-.toolbar-strip { top: 5%; }
+.menu-strip {
+    top: 0%;
+    height: 3%;
+    background-color: rgb(24, 29, 40);   /* darkest: the menu bar */
+    justify-content: flex-start;   /* File sits at the left, like a normal menu bar */
+    align-items: flex-start;       /* the open dropdown grows downwards, not both ways */
+}
+.toolbar-strip {
+    top: 3%;
+    height: 4%;
+    background-color: rgb(40, 49, 66);   /* lighter: the Play / Stop toolbar */
+}
 
 .toolbar {
-    background-color: white;
+    background-color: transparent;       /* the strip already has the colour */
     font-family: var(--font-main);
-    font-size: 14;
-    padding: 6px;
-    gap: 8px;
-    border-radius: 10px;
+    font-size: 13;
+    padding: 2px;
+    gap: 6px;
+    border-radius: 0px;
     flex-direction: row;
     justify-content: center;
+    align-items: center;
 }
 
 .mode-button {
-    width: 70px;
+    width: 56px;
 }
 
 .mode-status {
-    color: black;
+    color: rgb(150, 162, 182);
 }
 .console {
     position: absolute;
@@ -163,36 +222,36 @@
     align-items: flex-start;
     gap: 6px;
     padding: 6px;
-    background-color: white;
-    color: black;
+    background-color: rgb(32, 38, 50);
+    color: rgb(222, 228, 238);
     overflow: hidden;           /* nothing may draw outside the panel */
 }
 
 .console-clear {
     font-family: var(--font-main);
-    
+
 }
 
 .console-scroll {
     height: 75%;                /* any non-auto height: now clamped to the parent */
     width: 100%;
     overflow: auto;
-    background-color: rgb(245, 245, 245);
+    background-color: rgb(22, 26, 34);
     scrollbar-size: 10px;
     scroll-speed: 30;
 }
 .console-text {
     align-self: flex-start;
-    color: black;
+    color: rgb(214, 222, 236);
     font-family: var(--font-main);
-    height: auto; 
+    height: auto;
 }
 .console-scroll::scrollbar {
-    background-color: rgb(210, 210, 210);     /* track */
+    background-color: rgb(22, 26, 34);        /* track */
 }
 
 .console-scroll::scrollbar-thumb {
-    background-color: rgb(120, 120, 130);     /* the draggable part */
+    background-color: rgb(88, 140, 224);      /* the draggable part */
 }
 
 /* ------------------------------------------------------------------ */
@@ -201,35 +260,37 @@
 .menu-bar {
     flex-direction: row;
     align-items: flex-start;
-    background-color: white;
-    padding: 3px;
+    background-color: transparent;       /* the strip already has the colour */
+    padding: 1px;
     gap: 0px;
-    border-radius: 6px;
-    color: black;
+    border-radius: 0px;
+    color: rgb(222, 228, 238);
     font-family: var(--font-main);
+    font-size: 13;
 }
 
 .file-menu {
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
+    border-width: 0px;
+    gap: 1px;
 }
 .file-menu-button {
-    width: 90px;
-    color: black;
+    width: 56px;
+    color: rgb(222, 228, 238);
 }
 .file-dropdown {
     flex-direction: column;
     width: 130px;
     padding: 4px;
     gap: 3px;
-    background-color: white;
+    background-color: rgb(42, 50, 66);
     border-width: 1px;
-    border-color: rgb(150, 150, 150);
+    border-color: rgb(68, 82, 108);
 }
 .file-menu-item {
     width: 100%;
-    color: black;
+    color: rgb(222, 228, 238);
     text-align: left;
 }
 
@@ -245,16 +306,16 @@
     padding: 12px;
     gap: 8px;
     flex-direction: column;
-    background-color: rgb(248, 248, 248);
-    color: black;
-    border-width: 2px;
-    border-color: rgb(90, 90, 90);
+    background-color: rgb(38, 45, 60);
+    color: rgb(222, 228, 238);
+    border-width: 1px;
+    border-color: rgb(88, 140, 224);
     border-radius: 8px;
 }
 .file-dialog-title {
     font-size: 20;
     font-family: var(--font-main);
-    color: black;
+    color: rgb(240, 244, 250);
 }
 .file-dialog-location {
     flex-direction: row;
@@ -267,7 +328,7 @@
 }
 .file-dialog-dir {
     flex-grow: 1;
-    color: black;
+    color: rgb(170, 182, 202);
     font-family: var(--font-main);
 }
 .file-dialog-list {
@@ -275,29 +336,29 @@
     height: 58%;
     flex-direction: column;
     overflow: auto;
-    background-color: white;
+    background-color: rgb(22, 26, 34);
     border-width: 1px;
-    border-color: rgb(190, 190, 190);
+    border-color: rgb(68, 82, 108);
     padding: 4px;
     gap: 2px;
 }
 .file-dialog-entry {
     width: 100%;
-    color: black;
+    color: rgb(222, 228, 238);
     text-align: left;
     font-family: var(--font-main);
 }
 .file-dialog-label {
-    color: black;
+    color: rgb(170, 182, 202);
     font-family: var(--font-main);
 }
 .file-dialog-name {
     width: 100%;
-    color: black;
-    background-color: white;
+    color: rgb(240, 244, 250);
+    background-color: rgb(22, 26, 34);
 }
 .file-dialog-status {
-    color: rgb(100, 45, 25);
+    color: rgb(255, 150, 120);
 }
 .file-dialog-actions {
     flex-direction: row;
@@ -310,10 +371,10 @@
 .editor-texture {
     position: absolute;
     left: 15%;
-    top: 10%;
+    top: 7%;
     width: 65%;
-    height: 60%;
-    background-color: rgb(20, 20, 24);   /* the viewport paints its own panel */
+    height: 63%;
+    background-color: rgb(18, 22, 30);   /* the viewport paints its own panel */
 }
 
 /* ------------------------------------------------------------------ */
@@ -321,11 +382,11 @@
 /* ------------------------------------------------------------------ */
 .inspector-script {
     align-items: center;
-    background-color: rgb(235, 235, 245);
+    background-color: rgb(44, 58, 84);
 }
 .inspector-script-name {
     flex-grow: 1;
-    color: black;
+    color: rgb(222, 228, 238);
 }
 .inspector-script-remove {
     width: 24px;
@@ -334,8 +395,8 @@
     width: 100%;
     height: 30px;
     margin-top: 10px;
-    color: black;
-    flex-shrink: 0; 
+    color: rgb(240, 244, 250);
+    flex-shrink: 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -352,17 +413,17 @@
     height: 44px;
     padding: 4px;
     flex-direction: column;
-    background-color: white;
+    background-color: rgb(42, 50, 66);
     border-width: 1px;
-    border-color: rgb(150, 150, 150);
+    border-color: rgb(68, 82, 108);
     border-radius: 6px;
-    color: black;
+    color: rgb(222, 228, 238);
     font-family: var(--font-main);
 }
 .hier-menu-item {
     width: 100%;
     height: 30px;
-    color: black;
+    color: rgb(222, 228, 238);
     text-align: left;
 }
 
@@ -376,18 +437,18 @@
     padding: 6px;
     gap: 6px;
     flex-direction: column;
-    background-color: white;
+    background-color: rgb(42, 50, 66);
     border-width: 1px;
-    border-color: rgb(150, 150, 150);
+    border-color: rgb(68, 82, 108);
     border-radius: 6px;
-    color: black;
+    color: rgb(222, 228, 238);
     font-family: var(--font-main);
 }
 .add-menu-search {
     width: 100%;
     height: 28px;
-    color: black;
-    background-color: white;
+    color: rgb(240, 244, 250);
+    background-color: rgb(22, 26, 34);
 }
 .add-menu-list {
     width: 100%;
@@ -396,21 +457,66 @@
     overflow: auto;
     gap: 2px;
     scrollbar-size: 10px;
-    background-color: rgb(248, 248, 248);
+    background-color: rgb(28, 33, 44);
 }
 .add-menu-list::scrollbar {
-    background-color: rgb(210, 210, 210);
+    background-color: rgb(22, 26, 34);
 }
 .add-menu-list::scrollbar-thumb {
-    background-color: rgb(120, 120, 130);
+    background-color: rgb(88, 140, 224);
 }
 .add-menu-item {
     width: 100%;
     height: 28px;
-    color: black;
+    color: rgb(222, 228, 238);
     text-align: left;
 }
 /* Components that are already on the entity, or don't match the search. */
 .add-menu-hidden {
     display: none;
 }
+
+/* ------------------------------------------------------------------ */
+/* Buttons: dark blue-grey with a lighter hover. If your buttons are drawn   */
+/* by RUI and ignore these, delete this block.                               */
+/* ------------------------------------------------------------------ */
+.mode-button,
+.hier-create,
+.file-menu-button,
+.file-menu-item,
+.console-clear,
+.add-component-button,
+.hier-menu-item,
+.add-menu-item,
+.file-dialog-small-button,
+.file-dialog-entry,
+.file-dialog-action,
+.inspector-ref-clear,
+.inspector-script-remove,
+.inspector-header {
+    background-color: rgb(54, 66, 90);
+}
+
+.mode-button:hover,
+.hier-create:hover,
+.file-menu-button:hover,
+.file-menu-item:hover,
+.console-clear:hover,
+.add-component-button:hover,
+.hier-menu-item:hover,
+.add-menu-item:hover,
+.file-dialog-small-button:hover,
+.file-dialog-entry:hover,
+.file-dialog-action:hover,
+.inspector-ref-clear:hover,
+.inspector-script-remove:hover,
+.inspector-header:hover {
+    background-color: rgb(62, 80, 112);
+}
+
+/* The component header and group header keep their own tints above; these two
+   restore them because the block above would otherwise override .inspector-header. */
+.inspector-component { background-color: rgb(54, 66, 90); }
+.inspector-group     { background-color: rgb(44, 55, 74); }
+.inspector-component:hover { background-color: rgb(62, 80, 112); }
+.inspector-group:hover     { background-color: rgb(54, 68, 94); }

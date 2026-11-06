@@ -11,6 +11,7 @@
 #include "mirage_core/sprite_renderer.h"
 #include "mirage_editor/editor_state.h"      // Tool, Mode, EditorState
 #include "mirage_editor/undo_stack.h"
+#include "mirage_core/physics_debug.h"
 #include <css_emulator.h>
 
 // ---------------------------------------------------------------------------
@@ -615,7 +616,8 @@ private:
         const float zoom = view ? view->camera.zoom : 1.0f;
         DrawRectangleLinesEx({0, 0, 1600, 900}, 2.0f / zoom, WHITE);
         sprites_.Draw(core_.registry, kPixelsPerUnit, kPixelsPerUnit);
-
+        physics_debug::HandleToggle();
+        physics_debug::DrawColliders(core_.registry, kPixelsPerUnit, 1.0f / zoom);
         //DrawSelection(zoom);
         if (state_.mode == Mode::Edit)
             DrawGizmo(zoom, view ? view->world_mouse : Vector2{0, 0});

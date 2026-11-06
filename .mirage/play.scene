@@ -2,8 +2,228 @@
   "entities": [
     {
       "components": {
+        "BoxCollider2D": {
+          "density": 10.0,
+          "friction": 0.0,
+          "isSensor": false,
+          "offset": [
+            0.0,
+            0.10000000149011612
+          ],
+          "restitution": 0.0,
+          "size": [
+            0.4000000059604645,
+            0.800000011920929
+          ]
+        },
         "Game": {
-          "name": "Boids Manager"
+          "name": "Player"
+        },
+        "RigidBody2D": {
+          "allowSleep": true,
+          "angularDamping": 0.04999999701976776,
+          "angularVelocity": 0.0,
+          "bullet": false,
+          "enabled": true,
+          "fixedRotation": true,
+          "gravityScale": 1.0,
+          "linearDamping": 0.0,
+          "linearVelocity": [
+            0.0,
+            0.0
+          ],
+          "mass": 1.0,
+          "type": 0
+        },
+        "Sprite": {
+          "flipX": false,
+          "flipY": false,
+          "layer": 1,
+          "path": "textures/Mechanic Guy.png",
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "source": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "tint": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            8.126395225524902,
+            2.619039535522461,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            -0.00011668354272842407,
+            1.0
+          ],
+          "scale": [
+            2.0,
+            2.0,
+            1.0
+          ]
+        }
+      },
+      "id": "4abe86d5-de52-4f81-bb13-ad60fd51b3eb",
+      "scripts": [
+        {
+          "fields": {
+            "JumpSpeed": {
+              "type": "Float",
+              "value": 4.0
+            },
+            "Speed": {
+              "type": "Float",
+              "value": 5.0
+            }
+          },
+          "path": "scripts/inputs.lua"
+        }
+      ]
+    },
+    {
+      "components": {
+        "BoxCollider2D": {
+          "density": 1.0,
+          "friction": 0.6000000238418579,
+          "isSensor": false,
+          "offset": [
+            0.0,
+            0.0
+          ],
+          "restitution": 0.0,
+          "size": [
+            0.5,
+            0.5
+          ]
+        },
+        "Game": {
+          "name": "Platform"
+        },
+        "Sprite": {
+          "flipX": false,
+          "flipY": false,
+          "layer": 1,
+          "path": "textures/square.png",
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "source": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "tint": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0.14641797542572021,
+            4.584425449371338,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            35.374969482421875,
+            1.0,
+            4.976311683654785
+          ]
+        }
+      },
+      "id": "4478e0ba-ecd4-4a07-8ea6-93b64f0a0d21"
+    },
+    {
+      "components": {
+        "BoxCollider2D": {
+          "density": 1.0,
+          "friction": 0.6000000238418579,
+          "isSensor": false,
+          "offset": [
+            0.0,
+            0.0
+          ],
+          "restitution": 0.0,
+          "size": [
+            0.5,
+            0.5
+          ]
+        },
+        "Game": {
+          "name": "Entity 3"
+        },
+        "Sprite": {
+          "flipX": false,
+          "flipY": false,
+          "layer": 1,
+          "path": "textures/Square.png",
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "source": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "tint": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            15.460187911987305,
+            9.671734809875488,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            15.42719554901123,
+            1.2127195596694946,
+            1.2127195596694946
+          ]
+        }
+      },
+      "id": "b5238307-b59b-4519-afcc-30ddc880ef92"
+    },
+    {
+      "components": {
+        "Game": {
+          "name": "Entity"
         },
         "Transform": {
           "position": [
@@ -24,46 +244,7 @@
           ]
         }
       },
-      "id": "1ad0e321-dd0f-4cf4-9327-a920f2f66662",
-      "scripts": [
-        {
-          "fields": {
-            "AlignmentWeight": {
-              "type": "Float",
-              "value": 1.5
-            },
-            "BoidVelocity": {
-              "type": "Int",
-              "value": 10
-            },
-            "CohesionWeight": {
-              "type": "Float",
-              "value": 0.5
-            },
-            "ConeAngle": {
-              "type": "Int",
-              "value": 120
-            },
-            "NumBoids": {
-              "type": "Int",
-              "value": 250
-            },
-            "SeparationWeight": {
-              "type": "Float",
-              "value": 0.5
-            },
-            "SightRadius": {
-              "type": "Float",
-              "value": 2.5
-            },
-            "TurnSpeed": {
-              "type": "Int",
-              "value": 180
-            }
-          },
-          "path": "scripts/manager.lua"
-        }
-      ]
+      "id": "afc1e6dc-54d9-4661-a95d-c2a02c5b5c7a"
     }
   ],
   "version": 1

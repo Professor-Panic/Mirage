@@ -1,6 +1,7 @@
 #include "mirage_core/sprite_renderer.h"
 #include "mirage_core/components.h"
 #include "mirage_core/component_systems.h"   // GetSpriteBounds, HitSprite
+
 #include <algorithm>
 #include <cmath>
 #include "rlgl.h"

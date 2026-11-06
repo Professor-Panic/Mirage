@@ -4,8 +4,11 @@
 #include "entt/entt.hpp"
 #include "mirage_core/reflection.h"
 #include "mirage_core/script_system.h"   // ScriptComponent::scripts
+#include <algorithm>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -55,19 +58,26 @@ struct CompRow {
     const ComponentInfo* info;
 };
 
-// One row per editable field on the selected entity.
+// One row of the inspector. A row is either a collapsible HEADER (a component
+// or a field group), a script row, or a normal editable field.
 struct FieldRow {
-    entt::entity entity;            // captured at build time, not read from `selected`
+    entt::entity entity = entt::null;   // captured at build time, not read from `selected`
     std::string component;
     std::string label;              // exposed rows: also the key in ScriptComponent::scripts[scriptPath]
-    const ComponentInfo* comp;
-    const FieldInfo* field;         // nullptr for exposed script fields and script headers
-    bool first;                     // first row of its component: the markup prints the component name
+    const ComponentInfo* comp = nullptr;
+    const FieldInfo* field = nullptr;   // nullptr for headers, exposed script fields and script headers
     bool exposed = false;           // true: backed by ScriptComponent::scripts[scriptPath]
     FieldType exposedType = FieldType::Float;
     bool isRef = false;             // EntityRef row: lets the markup use the picker
     std::string scriptPath;         // script rows: which script this row belongs to
     bool isScript = false;          // header row of one script (label = its path, has a remove button)
+
+    // Collapsible section headers (components and groups)
+    bool isHeader = false;
+    bool open = true;               // state when the row was built
+    std::string key;                // "RigidBody2D" or "RigidBody2D/Velocity": key into Inspector::open_
+    std::string title;              // text on the header button, includes the v / > marker
+    std::string cls;                // extra CSS classes: indentation, header look
 };
 
 inline FieldType InspectorTypeOfValue(const Value& v) {
@@ -141,7 +151,10 @@ public:
     Inspector(rui::Context& ui, entt::registry& registry,
               const Reflection& reflection, entt::entity& selected,
               EntityBus& bus)
-        : ui_(ui), registry_(registry), selected_(selected), bus_(bus) {
+        : ui_(ui), registry_(registry), reflection_(reflection), selected_(selected), bus_(bus) {
+
+        // 1 while an entity is selected: the markup hides Add Component without one.
+        ui_.runtime.Bind("has_selection", hasSelection_);
 
         // --- Components on the selected entity ------------------------------
         ui_.ui.LoadFont("Inter-Regular", "font/Inter/Inter_18pt-Regular.ttf",18);
@@ -162,56 +175,13 @@ public:
         // --- Editable fields on the selected entity -------------------------
 
         ui_.runtime.BindList("Entity_Fields",
-            [&] {
-                    std::vector<FieldRow> rows;
-
-                    if (registry.valid(selected))
-                        for (auto* info : ComponentsOf(reflection, registry, selected)) {
-                            bool first = true;
-
-                            for (auto& f : info->fields) {
-                                if (f.hidden) continue;
-                                rows.push_back({selected, info->name, f.label.empty() ? f.name : f.label, info, &f, first,
-                                                false, f.type, f.type == FieldType::EntityRef});
-                                first = false;
-                            }
-
-                            // Script component: one header per script, followed by
-                            // that script's own exposed fields.
-                            if (info->name == "Script")
-                                if (auto* sc = registry.try_get<ScriptComponent>(selected)) {
-                                    if (sc->scripts.empty()) {
-                                        FieldRow none{selected, info->name, "(no scripts)", info, nullptr,
-                                                      first, false, FieldType::String, false};
-                                        none.isScript = true;       // empty path: its remove button does nothing
-                                        rows.push_back(none);
-                                        first = false;
-                                    }
-
-                                    for (auto& [path, fields] : sc->scripts) {
-                                        FieldRow header{selected, info->name, path, info, nullptr,
-                                                        first, false, FieldType::String, false};
-                                        header.scriptPath = path;
-                                        header.isScript = true;
-                                        rows.push_back(header);
-                                        first = false;
-
-                                        for (auto& [key, value] : fields) {
-                                            const FieldType t = InspectorTypeOfValue(value);
-                                            FieldRow row{selected, info->name, key, info, nullptr,
-                                                         false, true, t, t == FieldType::EntityRef};
-                                            row.scriptPath = path;
-                                            rows.push_back(row);
-                                        }
-                                    }
-                                }
-                        }
-
-                    return rows;
-                },
+            [this] { return BuildRows(); },
             [&](auto& list) {
                 list.Field("component", &FieldRow::component)
-                    .Field("first",     &FieldRow::first)
+                    .Field("isHeader",  &FieldRow::isHeader)
+                    .Field("open",      &FieldRow::open)
+                    .Field("title",     &FieldRow::title)
+                    .Field("cls",       &FieldRow::cls)
                     .Field("isRef",     &FieldRow::isRef)
                     .Field("exposed",   &FieldRow::exposed)
                     .Field("isScript",  &FieldRow::isScript)
@@ -268,6 +238,14 @@ public:
                         [](FieldRow&, std::string) {});
             });
 
+        // Click on a component / group header: open or close that section. The state
+        // lives in open_ (not in the row), so it survives every rebuild.
+        ui_.runtime.ItemFunction<FieldRow>("toggleSection", [this](FieldRow& r) {
+            if (!r.isHeader) return;
+            open_[r.key] = !r.open;
+            ui_.runtime.Invalidate("Entity_Fields");
+        });
+
         // The "x" on a script header: detach that script from the entity.
         ui_.runtime.ItemFunction<FieldRow>("removeScript", [this](FieldRow& r) {
             if (!registry_.valid(r.entity) || r.scriptPath.empty()) return;
@@ -291,6 +269,13 @@ public:
 
     // Call once per frame: refreshes both lists when the selection changes.
     void Update() {
+        // Conditional markup is only re-evaluated on a rebuild, so rebuild when this flips.
+        const int has = registry_.valid(selected_) ? 1 : 0;
+        if (has != hasSelection_) {
+            hasSelection_ = has;
+            ui_.RequestRebuild();
+        }
+
         if (selected_ == previous_) return;
 
         ui_.runtime.Invalidate("Entity_Components");
@@ -299,6 +284,151 @@ public:
     }
 
 private:
+    // ---- Section state ------------------------------------------------------
+    // Components start open, groups start closed. Remembered per section name, not
+    // per entity, so the inspector keeps its layout when you click another entity.
+    bool IsOpen(const std::string& key, bool defaultOpen) const {
+        auto it = open_.find(key);
+        return it == open_.end() ? defaultOpen : it->second;
+    }
+
+    static std::string DepthClass(int depth) {
+        return "inspector-depth-" + std::to_string(std::clamp(depth, 0, 4));
+    }
+
+    // "Physics/Velocity" -> { "Physics", "Velocity" }
+    static std::vector<std::string> SplitGroup(const std::string& path) {
+        std::vector<std::string> out;
+        std::string part;
+        for (char c : path) {
+            if (c == '/') { if (!part.empty()) out.push_back(part); part.clear(); }
+            else part += c;
+        }
+        if (!part.empty()) out.push_back(part);
+        return out;
+    }
+
+    FieldRow MakeHeader(const ComponentInfo* info, const std::string& key, const std::string& label,
+                        const std::string& cls, bool hasContent, bool open) const {
+        FieldRow r;
+        r.entity = selected_;
+        r.component = info->name;
+        r.label = label;
+        r.comp = info;
+        r.isHeader = true;
+        r.open = open;
+        r.key = key;
+        r.title = (hasContent ? (open ? "v  " : ">  ") : "    ") + label;   // plain ASCII: the font has no arrows
+        r.cls = cls;
+        return r;
+    }
+
+    FieldRow MakeField(const ComponentInfo* info, const FieldInfo& f, int depth) const {
+        FieldRow r;
+        r.entity = selected_;
+        r.component = info->name;
+        r.label = f.label.empty() ? f.name : f.label;
+        r.comp = info;
+        r.field = &f;
+        r.exposedType = f.type;
+        r.isRef = f.type == FieldType::EntityRef;
+        r.cls = DepthClass(depth);
+        return r;
+    }
+
+    // Emits `fields` (all sharing the group prefix above `level`). A field with no
+    // group segment left at this level is a row; the others are collected under a
+    // header for their segment, whose members are emitted one level deeper.
+    void EmitLevel(std::vector<FieldRow>& rows, const ComponentInfo* info,
+                   const std::vector<const FieldInfo*>& fields,
+                   std::size_t level, const std::string& keyPrefix, int depth) {
+        std::set<std::string> done;
+        for (const FieldInfo* f : fields) {
+            const auto path = SplitGroup(f->group);
+            if (path.size() <= level) {
+                rows.push_back(MakeField(info, *f, depth));
+                continue;
+            }
+
+            const std::string& name = path[level];
+            if (!done.insert(name).second) continue;       // this group was already emitted
+
+            std::vector<const FieldInfo*> members;
+            for (const FieldInfo* g : fields) {
+                const auto gp = SplitGroup(g->group);
+                if (gp.size() > level && gp[level] == name) members.push_back(g);
+            }
+
+            const std::string key = keyPrefix + "/" + name;
+            const bool open = IsOpen(key, false);
+            rows.push_back(MakeHeader(info, key, name, "inspector-group " + DepthClass(depth), true, open));
+            if (open) EmitLevel(rows, info, members, level + 1, key, depth + 1);
+        }
+    }
+
+    // Script component: one header per script, followed by that script's own
+    // exposed fields.
+    void AppendScriptRows(std::vector<FieldRow>& rows, const ComponentInfo* info) {
+        auto* sc = registry_.try_get<ScriptComponent>(selected_);
+        if (!sc) return;
+
+        auto base = [&](std::string label) {
+            FieldRow r;
+            r.entity = selected_;
+            r.component = info->name;
+            r.label = std::move(label);
+            r.comp = info;
+            r.cls = DepthClass(1);
+            return r;
+        };
+
+        if (sc->scripts.empty()) {
+            FieldRow none = base("(no scripts)");
+            none.isScript = true;               // empty path: its remove button does nothing
+            rows.push_back(none);
+        }
+
+        for (auto& [path, fields] : sc->scripts) {
+            FieldRow header = base(path);
+            header.scriptPath = path;
+            header.isScript = true;
+            rows.push_back(header);
+
+            for (auto& [key, value] : fields) {
+                const FieldType t = InspectorTypeOfValue(value);
+                FieldRow row = base(key);
+                row.exposed = true;
+                row.exposedType = t;
+                row.isRef = t == FieldType::EntityRef;
+                row.scriptPath = path;
+                rows.push_back(row);
+            }
+        }
+    }
+
+    // Everything the inspector shows. Empty when nothing valid is selected.
+    std::vector<FieldRow> BuildRows() {
+        std::vector<FieldRow> rows;
+        if (!registry_.valid(selected_)) return rows;
+
+        for (auto* info : ComponentsOf(reflection_, registry_, selected_)) {
+            std::vector<const FieldInfo*> visible;
+            for (auto& f : info->fields)
+                if (!f.hidden) visible.push_back(&f);
+
+            const bool isScriptComponent = info->name == "Script";
+            const bool hasContent = !visible.empty() || isScriptComponent;
+            const bool open = IsOpen(info->name, true);
+
+            rows.push_back(MakeHeader(info, info->name, info->name, "inspector-component", hasContent, open));
+            if (!open || !hasContent) continue;
+
+            EmitLevel(rows, info, visible, 0, info->name, 1);
+            if (isScriptComponent) AppendScriptRows(rows, info);
+        }
+        return rows;
+    }
+
     // The exposed-field table of the script a row belongs to (nullptr if the
     // entity or that script is gone).
     std::map<std::string, Value>* ExposedFields(const FieldRow& r) {
@@ -329,8 +459,11 @@ private:
 
     rui::Context& ui_;
     entt::registry& registry_;
+    const Reflection& reflection_;
     entt::entity& selected_;
     EntityBus& bus_;
     entt::entity previous_ = entt::null;
+    int hasSelection_ = 0;
+    std::map<std::string, bool> open_;           // section key -> open?
     std::vector<std::shared_ptr<void>> watches_;   // type-erased ComponentWatch<C>
 };

@@ -5,6 +5,44 @@
 ---@alias MirageTable1 {x: number, y: number}
 ---@alias MirageTable2 {x: number, y: number, z: number}
 
+--- Box collider attached to the entity's rigid body (or a static body if it has none).
+---@class BoxCollider2D: ComponentHandle
+---Ownership: engine-owned
+---Lifetime: The component belongs to an EnTT entity. Lua handles resolve it on each access and become unavailable when the entity or component is removed.
+---@field size Vector2 # Full width and height in world units, multiplied by the transform's scale.
+---@field offset Vector2 # Centre of the box relative to the entity's position.
+---@field isSensor boolean # Detects overlaps but causes no physical response.
+---@field density number # Mass per area. Zero on a dynamic body means it has no mass.
+---@field friction number # Surface friction, usually 0 to 1.
+---@field restitution number # Bounciness. 0 = no bounce, 1 = perfectly elastic.
+BoxCollider2D = {}
+
+--- Capsule collider attached to the entity's rigid body (or a static body if it has none).
+---@class CapsuleCollider2D: ComponentHandle
+---Ownership: engine-owned
+---Lifetime: The component belongs to an EnTT entity. Lua handles resolve it on each access and become unavailable when the entity or component is removed.
+---@field radius number # Radius of the two end caps in world units.
+---@field height number # Distance between the two cap centres; total length is height + 2 * radius.
+---@field horizontal boolean # True lays the capsule on its side.
+---@field offset Vector2 # Centre of the capsule relative to the entity's position.
+---@field isSensor boolean # Detects overlaps but causes no physical response.
+---@field density number # Mass per area. Zero on a dynamic body means it has no mass.
+---@field friction number # Surface friction, usually 0 to 1.
+---@field restitution number # Bounciness. 0 = no bounce, 1 = perfectly elastic.
+CapsuleCollider2D = {}
+
+--- Circle collider attached to the entity's rigid body (or a static body if it has none).
+---@class CircleCollider2D: ComponentHandle
+---Ownership: engine-owned
+---Lifetime: The component belongs to an EnTT entity. Lua handles resolve it on each access and become unavailable when the entity or component is removed.
+---@field radius number # Radius in world units, multiplied by the larger axis of the transform's scale.
+---@field offset Vector2 # Centre of the circle relative to the entity's position.
+---@field isSensor boolean # Detects overlaps but causes no physical response.
+---@field density number # Mass per area. Zero on a dynamic body means it has no mass.
+---@field friction number # Surface friction, usually 0 to 1.
+---@field restitution number # Bounciness. 0 = no bounce, 1 = perfectly elastic.
+CircleCollider2D = {}
+
 --- RGBA color. Channels are integers clamped to the range 0..255.
 ---@class Color
 ---Ownership: value
@@ -154,6 +192,23 @@ function EntityRef:SetScript(path) end
 ---Lifetime: The component belongs to an EnTT entity. Lua handles resolve it on each access and become unavailable when the entity or component is removed.
 ---@field name string # Display name used to identify the entity in the game.
 Game = {}
+
+--- Box2D rigid body settings and live velocity.
+---@class RigidBody2D: ComponentHandle
+---Ownership: engine-owned
+---Lifetime: The component belongs to an EnTT entity. Lua handles resolve it on each access and become unavailable when the entity or component is removed.
+---@field type integer # Body type: 0 = Dynamic, 1 = Kinematic, 2 = Static.
+---@field mass number # Manual mass. Only used while the entity has no colliders.
+---@field gravityScale number # Multiplier on world gravity. 0 = floats, negative = falls upward.
+---@field linearDamping number # Drag on linear velocity.
+---@field angularDamping number # Drag on rotation.
+---@field fixedRotation boolean # Locks rotation so the body never spins.
+---@field allowSleep boolean # Lets the body sleep when it comes to rest.
+---@field bullet boolean # Continuous collision for fast bodies, so they don't tunnel.
+---@field enabled boolean # False removes the body from the simulation.
+---@field linearVelocity Vector2 # Units per second. Before the body exists this is the start velocity.
+---@field angularVelocity number # Degrees per second.
+RigidBody2D = {}
 
 --- Attached script paths and their persisted exposed fields.
 ---@class Script: ComponentHandle

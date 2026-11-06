@@ -7,6 +7,8 @@
 #include "mirage_core/lua_binding_backend.h"
 #include "mirage_core/event_bus.h"
 #include "mirage_core/script_system.h"
+#include "mirage_core/physics_system.h"
+#include "physics_system.h"
 #include "script_system.h"
 #include "sol/sol.hpp"
 #include "entt/entt.hpp"
@@ -20,6 +22,7 @@ struct MirageCoreRuntime{
     ScriptApiRegistry scriptApi;     // authoritative Lua API metadata; independent of Sol2
     LuaBindingBackend luaBindings;   // runtime Sol2 consumer of scriptApi
     ScriptSystem scriptSystem;
+    PhysicsSystem physicsSystem;
     MirageCoreRuntime();
     ~MirageCoreRuntime();
     MirageCoreRuntime(const MirageCoreRuntime&) = delete;

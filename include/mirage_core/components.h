@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+#include "box2d/box2d.h"
 // ---------------------------------------------------------------------------
 // Rotation helpers: Euler angles (degrees) <-> quaternion.
 //
@@ -193,3 +194,117 @@ struct SpriteComponent {
     bool    visible = true;
     int     layer   = 1;                        // lower draws first (behind)
 };
+
+enum class RigidBody { Dynamic, Kinematic, Static };   // order = the int the inspector/Lua sees: 0, 1, 2
+
+inline b2BodyType ToB2BodyType(RigidBody t)
+{
+    switch (t) {
+        case RigidBody::Static:    return b2_staticBody;
+        case RigidBody::Kinematic: return b2_kinematicBody;
+        default:                   return b2_dynamicBody;
+    }
+}
+
+struct RigidBody2DComponent {
+    // ---- Settings: reflected, saved in scenes, copied when an entity is cloned ----
+    RigidBody type          = RigidBody::Dynamic;
+    float     mass          = 1.0f;      // only used while the entity has NO colliders (see ApplyManualMass)
+    float     gravityScale  = 1.0f;
+    float     linearDamping  = 0.0f;
+    float     angularDamping = 0.0f;
+    bool      fixedRotation = false;
+    bool      allowSleep    = true;
+    bool      bullet        = false;     // continuous collision for fast bodies
+    bool      enabled       = true;      // false = removed from the simulation
+    Vector2   linearVelocity  = { 0.0f, 0.0f };   // units/s. Before the body exists: the START velocity
+    float     angularVelocity = 0.0f;             // degrees/s (same convention as eulerAngles)
+
+    // ---- Runtime state: NOT reflected, never saved ----
+    b2BodyId   bodyId = b2_nullBodyId;
+    Vector2    syncedPosition = { 0.0f, 0.0f };          // what physics last wrote to the Transform;
+    Quaternion syncedRotation = { 0.0f, 0.0f, 0.0f, 1.0f }; // a difference means a script/editor moved it
+
+    bool HasBody() const { return b2Body_IsValid(bodyId); }
+    void SetFixedRotation(bool f)
+    {
+        fixedRotation = f;
+        if (HasBody())
+        {
+            b2MotionLocks locks = b2Body_GetMotionLocks(bodyId);
+            locks.angularZ = f;
+            b2Body_SetMotionLocks(bodyId, locks);
+        }
+    }
+    // --- Setters that also push the change into a live body. Before the body
+    //     exists (scene load, inspector, clone) they only store the value. ---
+    void SetType(RigidBody t)
+    {
+        type = t;
+        if (HasBody()) { b2Body_SetType(bodyId, ToB2BodyType(t)); ApplyManualMass(); }
+    }
+    void SetMass(float m)
+    {
+        mass = m < 0.0001f ? 0.0001f : m;
+        ApplyManualMass();
+    }
+    void SetGravityScale(float g)    { gravityScale = g;    if (HasBody()) b2Body_SetGravityScale(bodyId, g); }
+    void SetLinearDamping(float d)   { linearDamping = d;   if (HasBody()) b2Body_SetLinearDamping(bodyId, d); }
+    void SetAngularDamping(float d)  { angularDamping = d;  if (HasBody()) b2Body_SetAngularDamping(bodyId, d); }
+    void SetAllowSleep(bool a)       { allowSleep = a;      if (HasBody()) b2Body_EnableSleeping(bodyId, a); }
+    void SetBullet(bool b)           { bullet = b;          if (HasBody()) b2Body_SetBullet(bodyId, b); }
+    void SetEnabled(bool e)
+    {
+        enabled = e;
+        if (HasBody()) { if (e) b2Body_Enable(bodyId); else b2Body_Disable(bodyId); }
+    }
+
+    // --- Velocity: reads the LIVE body when there is one, so scripts see real values ---
+    Vector2 GetLinearVelocity() const
+    {
+        if (HasBody()) { b2Vec2 v = b2Body_GetLinearVelocity(bodyId); return { v.x, v.y }; }
+        return linearVelocity;
+    }
+    void SetLinearVelocity(Vector2 v)
+    {
+        linearVelocity = v;
+        if (HasBody()) b2Body_SetLinearVelocity(bodyId, { v.x, v.y });
+    }
+    float GetAngularVelocity() const
+    {
+        if (HasBody()) return b2Body_GetAngularVelocity(bodyId) * RAD2DEG;
+        return angularVelocity;
+    }
+    void SetAngularVelocity(float degreesPerSecond)
+    {
+        angularVelocity = degreesPerSecond;
+        if (HasBody()) b2Body_SetAngularVelocity(bodyId, degreesPerSecond * DEG2RAD);
+    }
+
+    // Box2D takes mass from shapes. With no shapes a body has zero mass and would
+    // ignore gravity and forces, so (like Unity) we apply `mass` ourselves. Once
+    // colliders exist, the collider code should create shapes and the shape-derived
+    // mass wins (the GetShapeCount check below stops us overriding it).
+    // The inertia is that of a 1x1 box: mass * (1 + 1) / 12.
+    void ApplyManualMass()
+    {
+        if (!HasBody() || type != RigidBody::Dynamic) return;
+        if (b2Body_GetShapeCount(bodyId) > 0) return;
+        b2MassData md{};
+        md.mass = mass;
+        md.center = { 0.0f, 0.0f };
+        md.rotationalInertia = mass / 6.0f;
+        b2Body_SetMassData(bodyId, md);
+    }
+};
+struct ColliderBase {
+    Vector2 offset      = { 0, 0 };   // relative to the entity's position
+    bool    isSensor    = false;      // detects overlaps, no physical response
+    float   density     = 1.0f;       // 0 on a dynamic body = no mass
+    float   friction    = 0.6f;
+    float   restitution = 0.0f;       // bounciness
+    b2ShapeId shapeId   = b2_nullShapeId;   // runtime only: don't reflect, don't copy
+};
+struct BoxCollider2DComponent     : ColliderBase { Vector2 size = {1, 1}; };      // full width/height
+struct CircleCollider2DComponent  : ColliderBase { float radius = 0.5f; };
+struct CapsuleCollider2DComponent : ColliderBase { float radius = 0.25f; float height = 1.0f; bool horizontal = false; };

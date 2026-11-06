@@ -5,10 +5,12 @@
 #include "mirage_core/script_system.h"
 #include "mirage_core/lua_input.h"
 #include "mirage_core/lua_functions.h"
+#include <box2d/types.h>
 MirageCoreRuntime::MirageCoreRuntime():
     entityBus(registry),
     luaBindings(scriptApi),
-    scriptSystem(lua, reflection, registry, entityBus, events, luaBindings)
+    scriptSystem(lua, reflection, registry, entityBus, events, luaBindings),
+    physicsSystem(registry)
 {
     lua.open_libraries(
         sol::lib::base,
@@ -17,6 +19,7 @@ MirageCoreRuntime::MirageCoreRuntime():
         sol::lib::string,
         sol::lib::table
     );
+    //physics
     reflection.Component<TransformComponent>("Transform")
         .Field("position", &TransformComponent::position)
         .ScriptDescription("World-space position of the entity.")
@@ -55,6 +58,102 @@ MirageCoreRuntime::MirageCoreRuntime():
         .Field("visible", &SpriteComponent::visible).ScriptDescription("Whether the sprite is rendered.")
         .Field("layer",   &SpriteComponent::layer).ScriptDescription("Render layer; lower values are drawn behind higher values.")
         .ScriptExposed("Sprite texture, color, source rectangle and rendering settings.");
+    reflection.Component<RigidBody2DComponent>("RigidBody2D")
+    // enum -> int, see note 1. Order matches the enum: 0 Dynamic, 1 Kinematic, 2 Static
+    .Property<int>("type",
+        [](const RigidBody2DComponent& r) { return static_cast<int>(r.type); },
+        [](RigidBody2DComponent& r, int v) { r.SetType(static_cast<RigidBody>(std::clamp(v, 0, 2))); })
+        .ScriptDescription("Body type: 0 = Dynamic, 1 = Kinematic, 2 = Static.")
+    .Property<float>("mass",
+        [](const RigidBody2DComponent& r) { return r.mass; },
+        [](RigidBody2DComponent& r, float v) { r.SetMass(v); })
+        .ScriptDescription("Manual mass. Only used while the entity has no colliders.")
+    .Property<float>("gravityScale",
+        [](const RigidBody2DComponent& r) { return r.gravityScale; },
+        [](RigidBody2DComponent& r, float v) { r.SetGravityScale(v); })
+        .ScriptDescription("Multiplier on world gravity. 0 = floats, negative = falls upward.")
+    .Property<float>("linearDamping",
+        [](const RigidBody2DComponent& r) { return r.linearDamping; },
+        [](RigidBody2DComponent& r, float v) { r.SetLinearDamping(v); })
+        .ScriptDescription("Drag on linear velocity.")
+    .Property<float>("angularDamping",
+        [](const RigidBody2DComponent& r) { return r.angularDamping; },
+        [](RigidBody2DComponent& r, float v) { r.SetAngularDamping(v); })
+        .ScriptDescription("Drag on rotation.")
+    .Property<bool>("fixedRotation",
+        [](const RigidBody2DComponent& r) { return r.fixedRotation; },
+        [](RigidBody2DComponent& r, bool v) { r.SetFixedRotation(v); })
+        .ScriptDescription("Locks rotation so the body never spins.")
+    .Property<bool>("allowSleep",
+        [](const RigidBody2DComponent& r) { return r.allowSleep; },
+        [](RigidBody2DComponent& r, bool v) { r.SetAllowSleep(v); })
+        .ScriptDescription("Lets the body sleep when it comes to rest.")
+    .Property<bool>("bullet",
+        [](const RigidBody2DComponent& r) { return r.bullet; },
+        [](RigidBody2DComponent& r, bool v) { r.SetBullet(v); })
+        .ScriptDescription("Continuous collision for fast bodies, so they don't tunnel.")
+    .Property<bool>("enabled",
+        [](const RigidBody2DComponent& r) { return r.enabled; },
+        [](RigidBody2DComponent& r, bool v) { r.SetEnabled(v); })
+        .ScriptDescription("False removes the body from the simulation.")
+    .Property<Vector2>("linearVelocity",
+        [](const RigidBody2DComponent& r) { return r.GetLinearVelocity(); },
+        [](RigidBody2DComponent& r, const Vector2& v) { r.SetLinearVelocity(v); })
+        .ScriptDescription("Units per second. Before the body exists this is the start velocity.").Group("Velocity")
+    .Property<float>("angularVelocity",
+        [](const RigidBody2DComponent& r) { return r.GetAngularVelocity(); },
+        [](RigidBody2DComponent& r, float v) { r.SetAngularVelocity(v); })
+        .ScriptDescription("Degrees per second.")
+    .ScriptExposed("Box2D rigid body settings and live velocity.")
+    .Group("Velocity");
+    reflection.Component<BoxCollider2DComponent>("BoxCollider2D")
+    .Field<Vector2>("size", &BoxCollider2DComponent::size)
+        .ScriptDescription("Full width and height in world units, multiplied by the transform's scale.")
+    .Field<Vector2>("offset", &BoxCollider2DComponent::offset)
+        .ScriptDescription("Centre of the box relative to the entity's position.")
+    .Field<bool>("isSensor", &BoxCollider2DComponent::isSensor)
+        .ScriptDescription("Detects overlaps but causes no physical response.")
+    .Field<float>("density", &BoxCollider2DComponent::density)
+        .ScriptDescription("Mass per area. Zero on a dynamic body means it has no mass.").Group("Material")
+    .Field<float>("friction", &BoxCollider2DComponent::friction)
+        .ScriptDescription("Surface friction, usually 0 to 1.").Group("Material")
+    .Field<float>("restitution", &BoxCollider2DComponent::restitution)
+        .ScriptDescription("Bounciness. 0 = no bounce, 1 = perfectly elastic.").Group("Material")
+    .ScriptExposed("Box collider attached to the entity's rigid body (or a static body if it has none).");
+
+reflection.Component<CircleCollider2DComponent>("CircleCollider2D")
+    .Field<float>("radius", &CircleCollider2DComponent::radius)
+        .ScriptDescription("Radius in world units, multiplied by the larger axis of the transform's scale.")
+    .Field<Vector2>("offset", &CircleCollider2DComponent::offset)
+        .ScriptDescription("Centre of the circle relative to the entity's position.")
+    .Field<bool>("isSensor", &CircleCollider2DComponent::isSensor)
+        .ScriptDescription("Detects overlaps but causes no physical response.")
+    .Field<float>("density", &CircleCollider2DComponent::density)
+        .ScriptDescription("Mass per area. Zero on a dynamic body means it has no mass.").Group("Material")
+    .Field<float>("friction", &CircleCollider2DComponent::friction)
+        .ScriptDescription("Surface friction, usually 0 to 1.").Group("Material")
+    .Field<float>("restitution", &CircleCollider2DComponent::restitution)
+        .ScriptDescription("Bounciness. 0 = no bounce, 1 = perfectly elastic.").Group("Material")
+    .ScriptExposed("Circle collider attached to the entity's rigid body (or a static body if it has none).");
+
+reflection.Component<CapsuleCollider2DComponent>("CapsuleCollider2D")
+    .Field<float>("radius", &CapsuleCollider2DComponent::radius)
+        .ScriptDescription("Radius of the two end caps in world units.")
+    .Field<float>("height", &CapsuleCollider2DComponent::height)
+        .ScriptDescription("Distance between the two cap centres; total length is height + 2 * radius.")
+    .Field<bool>("horizontal", &CapsuleCollider2DComponent::horizontal)
+        .ScriptDescription("True lays the capsule on its side.")
+    .Field<Vector2>("offset", &CapsuleCollider2DComponent::offset)
+        .ScriptDescription("Centre of the capsule relative to the entity's position.")
+    .Field<bool>("isSensor", &CapsuleCollider2DComponent::isSensor)
+        .ScriptDescription("Detects overlaps but causes no physical response.")
+    .Field<float>("density", &CapsuleCollider2DComponent::density)
+        .ScriptDescription("Mass per area. Zero on a dynamic body means it has no mass.").Group("Material")
+    .Field<float>("friction", &CapsuleCollider2DComponent::friction)
+        .ScriptDescription("Surface friction, usually 0 to 1.").Group("Material")
+    .Field<float>("restitution", &CapsuleCollider2DComponent::restitution)
+        .ScriptDescription("Bounciness. 0 = no bounce, 1 = perfectly elastic.").Group("Material")
+    .ScriptExposed("Capsule collider attached to the entity's rigid body (or a static body if it has none).");
     entityBus.SetNameProvider(
         [](const entt::registry& r, entt::entity e) -> std::string
         {

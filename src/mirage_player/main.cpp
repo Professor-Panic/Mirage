@@ -1,6 +1,7 @@
 #include "raylib.h"
 
 #include <algorithm>
+#include <box2d/box2d.h>
 #include <iostream>
 #include <string>
 
@@ -11,6 +12,7 @@
 #include "mirage_core/line_socket.h"
 #include "mirage_player/cerr_tee.h"
 #include "mirage_core/lua_input.h"
+#include "mirage_core/physics_debug.h"
 using json = nlohmann::json;
 
 int main(int argc, char** argv)
@@ -30,7 +32,6 @@ int main(int argc, char** argv)
         TraceLog(LOG_ERROR, "usage: Mirage-Player --scene <file> [--port <n>]");
         return 1;
     }
-
     InitWindow(1600, 900, "Mirage-Player");
     SetTargetFPS(60);
     // ---- connection to the editor (optional) ----
@@ -71,7 +72,7 @@ int main(int argc, char** argv)
     CerrTee errorTee(std::cerr, [&](const std::string& line) { sendMessage("error", line); });
 
     MirageCoreRuntime core;
-
+    //physics stuff
     // Set before loading: loading runs each script's factory, which may print.
     core.scriptLog.onAdd = [&](const std::string& line)
     {
@@ -97,6 +98,7 @@ int main(int argc, char** argv)
     //Asset Manager stuff
     AssetManager assetManager;
     SpriteRenderer spriteRenderer=SpriteRenderer(assetManager);
+    core.physicsSystem.Initialise();
     // ---- main loop: fixed-timestep update, draw at the display's rate ----
     const float step = 1.0f / 60.0f;
     float acc = 0.0f;
@@ -133,6 +135,8 @@ int main(int argc, char** argv)
         while (acc >= step)
         {
             core.scriptSystem.UpdateScripts(step);
+            core.physicsSystem.Step(step);
+            //Physics stuff
             ClearLatchedInput();
             acc -= step;
         }
@@ -140,6 +144,9 @@ int main(int argc, char** argv)
         BeginDrawing();
         ClearBackground(BLACK);
         spriteRenderer.Draw(core.registry,64,64);
+        physics_debug::HandleToggle();                                  // F2 on/off
+        physics_debug::DrawColliders(core.registry, (float)kPixelsPerUnit);
+
         DrawFPS(10, 10);
         EndDrawing();
     }

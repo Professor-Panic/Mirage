@@ -32,6 +32,7 @@ struct FieldInfo{
     bool  hidden = false;           // not shown in the inspector
     bool  transient = false;        // derived from other fields: never saved to a scene file
     std::string label;              // inspector text; empty = use `name`
+    std::string group;              // inspector dropdown this field lives in; "A/B" nests. Empty = not grouped
     // Address of the member inside the component. Set by Builder::Field only;
     // null for computed Property fields, which must go through get/set.
     std::function<void*(void*)> addr;
@@ -97,6 +98,12 @@ public:
         // Modifiers for the field added last:
         Builder& Hidden()    { if (!info.fields.empty()) info.fields.back().hidden = true;    return *this; }
         Builder& Transient() { if (!info.fields.empty()) info.fields.back().transient = true; return *this; }
+        // Puts the field added last into a collapsible group in the inspector:
+        //   .Property<Vector2>("linearVelocity", ...).Group("Velocity")
+        //   .Property<float>("angularVelocity", ...).Group("Velocity")
+        // Fields of one group are drawn together, where its first field appears.
+        // "Physics/Velocity" nests a group inside another. Only affects the inspector.
+        Builder& Group(std::string path) { if (!info.fields.empty()) info.fields.back().group = std::move(path); return *this; }
         Builder& Label(std::string text) { if (!info.fields.empty()) info.fields.back().label = std::move(text); return *this; }
         Builder& ScriptDescription(std::string text) {
             if (!info.fields.empty()) info.fields.back().scriptDescription = std::move(text);

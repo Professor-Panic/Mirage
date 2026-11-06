@@ -24,7 +24,7 @@
                 onSubmit="{editing = false}"
             />
         </for>
-        <Button onClick="{createEntity}">Create Entity</Button>
+        <Button class="hier-create" onClick="{createEntity}">Create Entity</Button>
     </Container>
 
     <!-- Play / Edit toggle. `mode` is the C++ enum: 0 = Edit, 1 = Play. -->
@@ -52,24 +52,25 @@
 
     <Container class="inspector" direction="column" showScrollbars="true">
         <for each="{Entity_Fields}" as="f">
-            <Label if="{f.first}" class="inspector-component">{f.component}</Label>
+            <!-- Collapsible header: one per component, and one per field group. -->
+            <Button if="{f.isHeader}" class="inspector-header {f.cls}" onClick="{toggleSection()}">{f.title}</Button>
             <!-- Header of one script on the entity: its path and a button that detaches it. -->
-            <Row if="{f.isScript}" class="inspector-row inspector-script">
+            <Row if="{!f.isHeader && f.isScript}" class="inspector-row inspector-script {f.cls}">
                 <Label class="inspector-script-name">{f.label}</Label>
                 <Button class="inspector-script-remove" onClick="{removeScript()}">x</Button>
             </Row>
-            <Row if="{!f.isRef && !f.isScript}" class="inspector-row">
+            <Row if="{!f.isHeader && !f.isRef && !f.isScript}" class="inspector-row {f.cls}">
                 <Label class="inspector-label">{f.label}:</Label>
                 <Input class="class-inspector-field" value="{f.value}" sync="true" onSubmit="{refreshUI()}" />
             </Row>
-            <Row if="{f.isRef && !f.isScript}" class="inspector-row inspector-ref" dropTypes="entity" onDrop="f.value = $event.value.text">
+            <Row if="{!f.isHeader && f.isRef && !f.isScript}" class="inspector-row inspector-ref {f.cls}" dropTypes="entity" onDrop="f.value = $event.value.text">
                 <Label class="inspector-label">{f.label}:</Label>
                 <Label class="inspector-ref-name" sync="true">{f.display}</Label>
                 <Button class="inspector-ref-clear" onClick="{f.value = ''}">x</Button>
             </Row>
         </for>
-        <!-- Like Unity: always at the end of the inspector. Opens the same dropdown as a right-click. -->
-        <Button class="add-component-button" onClick="{openAddMenu}">Add Component</Button>
+        <!-- Like Unity: always at the end of the inspector, but only with an entity selected. -->
+        <Button if="{has_selection == 1}" class="add-component-button" onClick="{openAddMenu}">Add Component</Button>
     </Container>
 
     <Container class="console">

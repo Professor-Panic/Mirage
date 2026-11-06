@@ -33,7 +33,7 @@ return function(self)
             ref:AddComponent("Sprite")
             local sprite = ref:GetComponent("Sprite")
             sprite.path = "textures/triangle.png"
-            sprite.tint = Color(255.0, 0.0, 0.0)
+            sprite.tint = Color(0,math.random()*55+200,math.random()*55+200)
 
             local x = math.random() * WORLD_W
             local y = math.random() * WORLD_H
@@ -132,7 +132,6 @@ return function(self)
                     hx[i], hy[i] = fx, fy
                 end
             end
-
             -- integrate and wrap, in plain numbers
             x = x + fx * step
             y = y + fy * step

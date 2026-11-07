@@ -12,7 +12,6 @@
 #include "mirage_core/line_socket.h"
 #include "mirage_player/cerr_tee.h"
 #include "mirage_core/lua_input.h"
-#include "mirage_core/physics_debug.h"
 using json = nlohmann::json;
 
 int main(int argc, char** argv)
@@ -144,9 +143,6 @@ int main(int argc, char** argv)
         BeginDrawing();
         ClearBackground(BLACK);
         spriteRenderer.Draw(core.registry,64,64);
-        physics_debug::HandleToggle();                                  // F2 on/off
-        physics_debug::DrawColliders(core.registry, (float)kPixelsPerUnit);
-
         DrawFPS(10, 10);
         EndDrawing();
     }

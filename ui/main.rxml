@@ -83,6 +83,7 @@
     <!-- Right-click menu for the hierarchy (mirage_editor/editor_menus.h). -->
     <Container class="hier-menu" if="{hier_menu_open == 1}" direction="column">
         <Button class="hier-menu-item" onClick="{createEntity}">Create Entity</Button>
+        <Button class="hier-menu-item" onClick="{deleteEntity}">Delete Entity</Button>
     </Container>
 
     <!-- Add Component dropdown: search box + one button per component.

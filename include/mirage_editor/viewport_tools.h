@@ -201,7 +201,7 @@ public:
         : core_(core), state_(state), sprites_(sprites), ui_(ui)
     {
         ui.runtime.Function("sceneViewUpdate", [this](const rui::Event& e) { OnUpdate(e); });
-        ui.runtime.Function("sceneViewDraw",   [this](const rui::Event& e) { OnDraw(e); });
+        ui.runtime.Function("sceneViewDraw",   [this, &state](const rui::Event& e) { OnDraw(e,state.selected); });
     }
 
     ViewportTools(const ViewportTools&) = delete;
@@ -610,14 +610,14 @@ private:
     // ------------------------------------------------------------------
     // Draw
     // ------------------------------------------------------------------
-    void OnDraw(const rui::Event& e)
+    void OnDraw(const rui::Event& e,entt::entity&selected)
     {
         const auto* view = static_cast<const rui::Viewport*>(e.native_widget);
         const float zoom = view ? view->camera.zoom : 1.0f;
         DrawRectangleLinesEx({0, 0, 1600, 900}, 2.0f / zoom, WHITE);
         sprites_.Draw(core_.registry, kPixelsPerUnit, kPixelsPerUnit);
         physics_debug::HandleToggle();
-        physics_debug::DrawColliders(core_.registry, kPixelsPerUnit, 1.0f / zoom);
+        physics_debug::DrawEntityColliders(core_.registry,selected,kPixelsPerUnit, 1.0f / zoom);
         //DrawSelection(zoom);
         if (state_.mode == Mode::Edit)
             DrawGizmo(zoom, view ? view->world_mouse : Vector2{0, 0});
